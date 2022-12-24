@@ -4,7 +4,6 @@ import logging
 import os
 import socket
 import struct
-import time
 import uuid
 
 CLIENT_ID = '1055680235682672682'
@@ -24,19 +23,14 @@ OP_PONG = 4
 
 connected = False
 client = None
-runningAppId = '0'
 
 class Plugin:
     async def rand(self, app):
         logger.info("rand")
         logger.info("Called with %s ", app)
 
-    async def clear_activity(self, appId):
+    async def clear_activity(self):
         global connected
-        global runningAppId
-
-        if (appId == '0'):
-            return False
         
         logger.info('Clearing activity')
 
@@ -54,16 +48,12 @@ class Plugin:
         op, result = Plugin.send_recv(data)
         logger.info("result %s", result)
 
-        runningAppId = '0'
-
         return True
 
-    # A normal method. It can be called from JavaScript using call_plugin_function("method_1", argument1, argument2)
-    async def update_activity(self, actionType, appId, action, details):
+    async def update_activity(self, appId, name, started):
         global connected
-        global runningAppId
 
-        logger.info('Called update activity: %s %s %s %s', actionType, appId, action, details)
+        logger.info('Called update activity: %s %s %s', appId, name, started)
         if not connected:
             await self.connect(self)
 
@@ -73,13 +63,13 @@ class Plugin:
                 'pid': os.getpid(),
                 'activity': {
                     'state': 'on Steam Deck',
-                    'details': 'Playing {}'.format(details['display_name']),
+                    'details': 'Playing {}'.format(name),
                     'assets': {
                         'large_image': 'https://cdn.akamai.steamstatic.com/steam/apps/{}/hero_capsule.jpg'.format(appId),
                         'small_image': 'steamdeck-icon'
                     },
                     'timestamps': {
-                        'start': round(time.time())
+                        'start': started
                     }
                 }
             },
@@ -89,7 +79,6 @@ class Plugin:
         op, result = Plugin.send_recv(data)
         logger.info("result %s", result)
 
-        runningAppId = appId
         return True
 
     async def reconnect(self):
@@ -112,7 +101,7 @@ class Plugin:
         global connected
         global client
 
-        logger.info("Starting Steam Deck Discord Status plugin")
+        logger.info("Starting Steam Deck Discord Status")
         connected = False
 
         await self.connect(self)

@@ -7,55 +7,28 @@ import {
 } from 'decky-frontend-lib';
 import { useCallback, useEffect, useState, VFC } from 'react';
 import { FaDiscord } from 'react-icons/fa';
+import { Api } from './api';
 
-import { AppStore } from './AppStore';
-import { SteamClient } from './SteamClient';
-
-declare global {
-    // @ts-ignore
-    let SteamClient: SteamClient;
-    let appStore: AppStore;
-}
-
-interface UpdateActivity {
-    actionType: number;
-    appId: string;
-    action: string;
-    details: any;
-}
-
-const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
+const Content: VFC<{ api: Api }> = ({ api }) => {
     const [connected, setConnected] = useState(false);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         const onLoad = async () => {
             setLoading(true);
-            const result = await serverAPI.callPluginMethod<{}, boolean>('reconnect', {});
+            const reconnected = await api.reconnect();
             setLoading(false);
-            if (result.success) {
-                if (result.result) {
-                    setConnected(true);
-                } else {
-                    setConnected(false);
-                }
-            }
+            setConnected(reconnected);
         };
         onLoad();
-    }, []);
+    }, [api]);
 
     const onClick = useCallback(async () => {
         setLoading(true);
-        const result = await serverAPI.callPluginMethod<{}, boolean>('reconnect', {});
+        const reconnected = await api.reconnect();
         setLoading(false);
-        if (result.success) {
-            if (result.result) {
-                setConnected(true);
-            } else {
-                setConnected(false);
-            }
-        }
-    }, []);
+        setConnected(reconnected);
+    }, [api]);
 
     let status = 'Connected';
     if (!connected && loading) {
@@ -69,86 +42,24 @@ const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
             <ButtonItem disabled={connected || loading} layout="below" onClick={onClick}>
                 {status}
             </ButtonItem>
+            {api.runningActivity ? (
+                <pre>{JSON.stringify(api.runningActivity.gameInfo, null, 2)}</pre>
+            ) : (
+                <div>No activity is running...</div>
+            )}
         </PanelSection>
     );
 };
 
 export default definePlugin((serverApi: ServerAPI) => {
-    /*const focusChangeEvent = SteamClient.System.UI.RegisterForFocusChangeEvents(
-        (event: any) => {
-            serverApi.callPluginMethod<{}, {}>('rand', {
-                app: event
-            });
-        }
-    );*/
-    
-    let runningApp: any = null;
+    const api = Api.initialize(serverApi);
 
-    const onSuspendHook = SteamClient.System.RegisterForOnSuspendRequest(async () => {
-        if (runningApp) {
-            await serverApi.callPluginMethod<Pick<UpdateActivity, 'appId'>, {}>('clear_activity', {
-                appId: runningApp.appId
-            })
-        }
-    });
-    
-    const onResumeHook = SteamClient.System.RegisterForOnResumeFromSuspend(async () => {
-        if (runningApp) {
-            serverApi.callPluginMethod<UpdateActivity, {}>('update_activity', {
-                actionType: 1,
-                appId: runningApp.appId,
-                action: 'LaunchApp',
-                details: runningApp.details
-            });
-        }
-    })
-
-    const lifetimeHook = SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
-        (app: any) => {
-            if (!app.bRunning) {
-                serverApi.callPluginMethod<Pick<UpdateActivity, 'appId'>, {}>('clear_activity', {
-                    appId: app.unAppID.toString()
-                }).then(() => {
-                    runningApp = null;
-                });
-            } else {
-                serverApi.callPluginMethod<{}, {}>('rand', { app });
-            }
-        }
-    );
-
-    const taskHook = SteamClient.Apps.RegisterForGameActionTaskChange(
-        (actionType: number, id: string, action: string, status: string) => {
-            if (action === 'LaunchApp' && status === 'Completed') {
-                let gameInfo: any = appStore.GetAppOverviewByGameID(id);
-                if (gameInfo.display_name.toLowerCase().includes('discord')) {
-                    serverApi.callPluginMethod<{}, {}>('reconnect', {});
-                } else {
-                    serverApi.callPluginMethod<UpdateActivity, {}>('update_activity', {
-                        actionType,
-                        appId: id,
-                        action,
-                        details: gameInfo
-                    }).then(() => {
-                        runningApp = {
-                            appId: id,
-                            details: gameInfo
-                        };
-                    });
-                }
-            }
-        }
-    );
     return {
         title: <div className={staticClasses.Title}>Discord Status</div>,
-        content: <Content serverAPI={serverApi} />,
+        content: <Content api={api} />,
         icon: <FaDiscord />,
         onDismount: () => {
-            // focusChangeEvent.unregister();
-            lifetimeHook.unregister();
-            onResumeHook.unregister();
-            onSuspendHook.unregister();
-            taskHook.unregister();
+            api.unregister();
         }
     };
 });

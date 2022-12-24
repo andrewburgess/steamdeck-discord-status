@@ -390,3 +390,8 @@ export interface AppOverview {
     review_percentage_without_bombs: number;
     steam_deck_compat_category: number;
 }
+
+declare global {
+    // @ts-ignore
+    let SteamClient: SteamClient;
+}
