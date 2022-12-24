@@ -13,7 +13,7 @@ logging.basicConfig(filename="/tmp/discord-status.log",
                     filemode='w+',
                     force=True)
 logger=logging.getLogger()
-logger.setLevel(logging.INFO) # can be changed to logging.DEBUG for debugging issues
+logger.setLevel(logging.DEBUG) # can be changed to logging.DEBUG for debugging issues
 
 OP_HANDSHAKE = 0
 OP_FRAME = 1
@@ -24,10 +24,12 @@ OP_PONG = 4
 connected = False
 client = None
 
+class EmptyReceiveException(Exception):
+    """Raised when the socket was expected data but did not receive any"""
+
 class Plugin:
-    async def rand(self, app):
-        logger.info("rand")
-        logger.info("Called with %s ", app)
+    async def debug(self, args):
+        logger.info("Called with %s ", args)
 
     async def clear_activity(self):
         global connected
@@ -50,11 +52,12 @@ class Plugin:
 
         return True
 
-    async def update_activity(self, appId, name, started):
+    async def update_activity(self, appId, name, startTime):
         global connected
 
-        logger.info('Called update activity: %s %s %s', appId, name, started)
+        logger.info('Called update activity: %s %s %s', appId, name, startTime)
         if not connected:
+            logger.debug("Not connected... attempting to reconnect")
             await self.connect(self)
 
         data = {
@@ -69,7 +72,7 @@ class Plugin:
                         'small_image': 'steamdeck-icon'
                     },
                     'timestamps': {
-                        'start': started
+                        'start': startTime
                     }
                 }
             },
@@ -119,13 +122,25 @@ class Plugin:
         global connected
 
         tries = 0
+        socketPath = '/run/user/1000/app/com.discordapp.Discord/discord-ipc-0'
         while not connected and tries < 5:
-            client = socket.socket(socket.AF_UNIX)
-            client.settimeout(5)
-            logger.debug('Attempting to connect to socket...')
             tries = tries + 1
+            if not os.path.exists(socketPath):
+                logger.debug('Socket file does not exist')
+                await asyncio.sleep(5)
+                continue
+
+            client = socket.socket(socket.AF_UNIX)
+            logger.debug('Attempting to connect to socket...')
             try:
-                client.connect('/run/user/1000/app/com.discordapp.Discord/discord-ipc-0')
+                client.connect(socketPath)
+                await self._handshake(self)
+            except EmptyReceiveException:
+                if (client):
+                    client.close()
+                client = None
+                connected = False
+                await asyncio.sleep(5)
             except ConnectionResetError:
                 if (client):
                     client.close()
@@ -134,12 +149,11 @@ class Plugin:
                 await asyncio.sleep(5)
             except OSError as e:
                 logger.error("Socket not available: {}".format(e))
+                if (client):
+                    client.close()
                 await asyncio.sleep(5)
             except BaseException as e:
                 logger.error("Some other error occurred: {}".format(e))
-            else:
-                logger.info('Connected to IPC socket')
-                await self._handshake(self)
 
     def close(self):
         global connected
@@ -176,10 +190,18 @@ class Plugin:
     def _recv_exactly(size) -> bytes:
         buf = b""
         size_remaining = size
-        while size_remaining:
+        tries = 0
+        while size_remaining and tries < 10:
             chunk = Plugin._recv(size_remaining)
             buf += chunk
+            if len(chunk) == 0:
+                logger.debug("empty receive")
+                tries = tries + 1
             size_remaining -= len(chunk)
+
+        if size_remaining > 0:
+            raise EmptyReceiveException()
+
         return buf
 
     def _recv_header():
@@ -215,7 +237,7 @@ class Plugin:
             else:
                 connected = False
         except BrokenPipeError as e:
-            logger.warn("Pipe is broken")
+            logger.warn("Write failed, pipe is broken")
             client = None
             connected = False
             
@@ -229,6 +251,6 @@ class Plugin:
             else:
                 connected = False
         except BrokenPipeError as e:
-            logger.warn("Pipe is broken")
+            logger.warn("Receive failed, pipe is broken")
             client = None
             connected = False

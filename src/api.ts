@@ -30,6 +30,7 @@ export class Api {
         this._runningActivity = activity;
     }
 
+    private suspendTime: number = 0;
     private onAppLifetimeNotificationHook: Hook;
     private onGameActionTaskChangeHook: Hook;
     private onResumeHook: Hook;
@@ -76,6 +77,11 @@ export class Api {
     }
 
     public async clearActivity(): Promise<boolean> {
+        await this.debug({
+            message: 'clearActivity',
+            runningActivity: this.runningActivity
+        });
+
         if (this.runningActivity) {
             const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
 
@@ -86,6 +92,11 @@ export class Api {
     }
 
     public async updateActivity(activity: Activity): Promise<boolean> {
+        await this.debug({
+            message: 'updateActivity',
+            activity
+        });
+
         const result = await this.serverApi.callPluginMethod<UpdateActivity, boolean>(
             'update_activity',
             {
@@ -104,8 +115,14 @@ export class Api {
     }
 
     protected async onAppLifetimeNotification(app: any) {
+        await this.debug({
+            message: 'lifetimeNotification',
+            app,
+            runningActivity: this.runningActivity
+        });
+
         if (!app.bRunning) {
-            if (app.appId.toString() === this.runningActivity?.appId) {
+            if (app.unAppID.toString() === this.runningActivity?.appId) {
                 const cleared = await this.clearActivity();
                 if (cleared) {
                     this.runningActivity = null;
@@ -114,12 +131,22 @@ export class Api {
         }
     }
 
+    protected async debug(args: any) {
+        await this.serverApi.callPluginMethod<any, {}>('debug', { args });
+    }
+
     protected async onGameActionTaskChange(
         _actionType: number,
         appId: string,
         action: string,
         status: string
     ) {
+        await this.debug({
+            _actionType,
+            appId,
+            action,
+            status
+        });
         if (action === 'LaunchApp' && status === 'Completed') {
             const gameInfo = appStore.GetAppOverviewByGameID(appId);
 
@@ -144,13 +171,25 @@ export class Api {
     }
 
     protected async onResume() {
+        await this.debug({
+            message: 'on resume'
+        });
         if (this.runningActivity) {
+            // Move startTime up by the amount of time suspended so that
+            // playtime in Discord is somewhat accurate
+            this.runningActivity.startTime =
+                this.runningActivity.startTime + (Date.now() - this.suspendTime);
             await this.updateActivity(this.runningActivity);
+            this.suspendTime = 0;
         }
     }
 
     protected async onSuspend() {
+        await this.debug({
+            message: 'on suspend'
+        });
         if (this.runningActivity) {
+            this.suspendTime = Date.now();
             await this.clearActivity();
         }
     }
