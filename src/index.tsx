@@ -81,12 +81,35 @@ export default definePlugin((serverApi: ServerAPI) => {
             });
         }
     );*/
+    
+    let runningApp: any = null;
+
+    const onSuspendHook = SteamClient.System.RegisterForOnSuspendRequest(async () => {
+        if (runningApp) {
+            await serverApi.callPluginMethod<Pick<UpdateActivity, 'appId'>, {}>('clear_activity', {
+                appId: runningApp.appId
+            })
+        }
+    });
+    
+    const onResumeHook = SteamClient.System.RegisterForOnResumeFromSuspend(async () => {
+        if (runningApp) {
+            serverApi.callPluginMethod<UpdateActivity, {}>('update_activity', {
+                actionType: 1,
+                appId: runningApp.appId,
+                action: 'LaunchApp',
+                details: runningApp.details
+            });
+        }
+    })
 
     const lifetimeHook = SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
         (app: any) => {
             if (!app.bRunning) {
                 serverApi.callPluginMethod<Pick<UpdateActivity, 'appId'>, {}>('clear_activity', {
                     appId: app.unAppID.toString()
+                }).then(() => {
+                    runningApp = null;
                 });
             } else {
                 serverApi.callPluginMethod<{}, {}>('rand', { app });
@@ -106,6 +129,11 @@ export default definePlugin((serverApi: ServerAPI) => {
                         appId: id,
                         action,
                         details: gameInfo
+                    }).then(() => {
+                        runningApp = {
+                            appId: id,
+                            details: gameInfo
+                        };
                     });
                 }
             }
@@ -118,6 +146,8 @@ export default definePlugin((serverApi: ServerAPI) => {
         onDismount: () => {
             // focusChangeEvent.unregister();
             lifetimeHook.unregister();
+            onResumeHook.unregister();
+            onSuspendHook.unregister();
             taskHook.unregister();
         }
     };

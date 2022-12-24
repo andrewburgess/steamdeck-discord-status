@@ -38,7 +38,7 @@ class Plugin:
         if (appId == '0'):
             return False
         
-        logger.info('Called clear activity')
+        logger.info('Clearing activity')
 
         if not connected:
             await self.connect(self)
@@ -76,7 +76,7 @@ class Plugin:
                     'details': 'Playing {}'.format(details['display_name']),
                     'assets': {
                         'large_image': 'https://cdn.akamai.steamstatic.com/steam/apps/{}/hero_capsule.jpg'.format(appId),
-                        'small_image': 'steamdeck-logo'
+                        'small_image': 'steamdeck-icon'
                     },
                     'timestamps': {
                         'start': round(time.time())
