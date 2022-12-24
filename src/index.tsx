@@ -1,105 +1,124 @@
 import {
-  ButtonItem,
-  definePlugin,
-  DialogButton,
-  Menu,
-  MenuItem,
-  PanelSection,
-  PanelSectionRow,
-  Router,
-  ServerAPI,
-  showContextMenu,
-  staticClasses,
-} from "decky-frontend-lib";
-import { VFC } from "react";
-import { FaShip } from "react-icons/fa";
+    ButtonItem,
+    definePlugin,
+    PanelSection,
+    ServerAPI,
+    staticClasses
+} from 'decky-frontend-lib';
+import { useCallback, useEffect, useState, VFC } from 'react';
+import { FaDiscord } from 'react-icons/fa';
 
-import logo from "../assets/logo.png";
+import { AppStore } from './AppStore';
+import { SteamClient } from './SteamClient';
 
-// interface AddMethodArgs {
-//   left: number;
-//   right: number;
-// }
+declare global {
+    // @ts-ignore
+    let SteamClient: SteamClient;
+    let appStore: AppStore;
+}
 
-const Content: VFC<{ serverAPI: ServerAPI }> = ({}) => {
-  // const [result, setResult] = useState<number | undefined>();
+interface UpdateActivity {
+    actionType: number;
+    appId: string;
+    action: string;
+    details: any;
+}
 
-  // const onClick = async () => {
-  //   const result = await serverAPI.callPluginMethod<AddMethodArgs, number>(
-  //     "add",
-  //     {
-  //       left: 2,
-  //       right: 2,
-  //     }
-  //   );
-  //   if (result.success) {
-  //     setResult(result.result);
-  //   }
-  // };
+const Content: VFC<{ serverAPI: ServerAPI }> = ({ serverAPI }) => {
+    const [connected, setConnected] = useState(false);
+    const [loading, setLoading] = useState(false);
 
-  return (
-    <PanelSection title="Panel Section">
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={(e) =>
-            showContextMenu(
-              <Menu label="Menu" cancelText="CAAAANCEL" onCancel={() => {}}>
-                <MenuItem onSelected={() => {}}>Item #1</MenuItem>
-                <MenuItem onSelected={() => {}}>Item #2</MenuItem>
-                <MenuItem onSelected={() => {}}>Item #3</MenuItem>
-              </Menu>,
-              e.currentTarget ?? window
-            )
-          }
-        >
-          Server says yolo
-        </ButtonItem>
-      </PanelSectionRow>
+    useEffect(() => {
+        const onLoad = async () => {
+            setLoading(true);
+            const result = await serverAPI.callPluginMethod<{}, boolean>('reconnect', {});
+            setLoading(false);
+            if (result.success) {
+                if (result.result) {
+                    setConnected(true);
+                } else {
+                    setConnected(false);
+                }
+            }
+        };
+        onLoad();
+    }, []);
 
-      <PanelSectionRow>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <img src={logo} />
-        </div>
-      </PanelSectionRow>
+    const onClick = useCallback(async () => {
+        setLoading(true);
+        const result = await serverAPI.callPluginMethod<{}, boolean>('reconnect', {});
+        setLoading(false);
+        if (result.success) {
+            if (result.result) {
+                setConnected(true);
+            } else {
+                setConnected(false);
+            }
+        }
+    }, []);
 
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={() => {
-            Router.CloseSideMenus();
-            Router.Navigate("/decky-plugin-test");
-          }}
-        >
-          Router
-        </ButtonItem>
-      </PanelSectionRow>
-    </PanelSection>
-  );
-};
+    let status = 'Connected';
+    if (!connected && loading) {
+        status = 'Checking connection status...';
+    } else if (!connected && !loading) {
+        status = 'Reconnect to Discord';
+    }
 
-const DeckyPluginRouterTest: VFC = () => {
-  return (
-    <div style={{ marginTop: "50px", color: "white" }}>
-      Hello World!
-      <DialogButton onClick={() => Router.NavigateToStore()}>
-        Go to Store
-      </DialogButton>
-    </div>
-  );
+    return (
+        <PanelSection title="Discord Status">
+            <ButtonItem disabled={connected || loading} layout="below" onClick={onClick}>
+                {status}
+            </ButtonItem>
+        </PanelSection>
+    );
 };
 
 export default definePlugin((serverApi: ServerAPI) => {
-  serverApi.routerHook.addRoute("/decky-plugin-test", DeckyPluginRouterTest, {
-    exact: true,
-  });
+    /*const focusChangeEvent = SteamClient.System.UI.RegisterForFocusChangeEvents(
+        (event: any) => {
+            serverApi.callPluginMethod<{}, {}>('rand', {
+                app: event
+            });
+        }
+    );*/
 
-  return {
-    title: <div className={staticClasses.Title}>Example Plugin</div>,
-    content: <Content serverAPI={serverApi} />,
-    icon: <FaShip />,
-    onDismount() {
-      serverApi.routerHook.removeRoute("/decky-plugin-test");
-    },
-  };
+    const lifetimeHook = SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
+        (app: any) => {
+            if (!app.bRunning) {
+                serverApi.callPluginMethod<Pick<UpdateActivity, 'appId'>, {}>('clear_activity', {
+                    appId: app.unAppID.toString()
+                });
+            } else {
+                serverApi.callPluginMethod<{}, {}>('rand', { app });
+            }
+        }
+    );
+
+    const taskHook = SteamClient.Apps.RegisterForGameActionTaskChange(
+        (actionType: number, id: string, action: string, status: string) => {
+            if (action === 'LaunchApp' && status === 'Completed') {
+                let gameInfo: any = appStore.GetAppOverviewByGameID(id);
+                if (gameInfo.display_name.toLowerCase().includes('discord')) {
+                    serverApi.callPluginMethod<{}, {}>('reconnect', {});
+                } else {
+                    serverApi.callPluginMethod<UpdateActivity, {}>('update_activity', {
+                        actionType,
+                        appId: id,
+                        action,
+                        details: gameInfo
+                    });
+                }
+            }
+        }
+    );
+    return {
+        title: <div className={staticClasses.Title}>Discord Status</div>,
+        content: <Content serverAPI={serverApi} />,
+        icon: <FaDiscord />,
+        onDismount: () => {
+            // focusChangeEvent.unregister();
+            lifetimeHook.unregister();
+            taskHook.unregister();
+        }
+    };
 });

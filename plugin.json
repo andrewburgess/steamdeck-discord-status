@@ -1,10 +1,10 @@
 {
-  "name": "Example Plugin",
-  "author": "John Doe",
-  "flags": ["debug", "_root"],
+  "name": "Discord Status",
+  "author": "Deceptacle",
+  "flags": [],
   "publish": {
-    "tags": ["template", "root"],
-    "description": "Decky example plugin.",
-    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
+    "tags": ["discord"],
+    "description": "Displays current Steam Deck game in Discord",
+    "image": "https://opengraph.githubassets.com/1/andrewburgess/steamdeck-discord-status"
   }
 }
