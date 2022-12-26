@@ -13,7 +13,7 @@ logging.basicConfig(filename="/tmp/discord-status.log",
                     filemode='w+',
                     force=True)
 logger=logging.getLogger()
-logger.setLevel(logging.DEBUG) # can be changed to logging.DEBUG for debugging issues
+logger.setLevel(logging.INFO) # can be changed to logging.DEBUG for debugging issues
 
 OP_HANDSHAKE = 0
 OP_FRAME = 1
@@ -21,6 +21,7 @@ OP_CLOSE = 2
 OP_PING = 3
 OP_PONG = 4
 
+connecting = False
 connected = False
 client = None
 
@@ -29,7 +30,7 @@ class EmptyReceiveException(Exception):
 
 class Plugin:
     async def debug(self, args):
-        logger.info("Called with %s ", args)
+        logger.debug("Called with %s ", args)
 
     async def clear_activity(self):
         global connected
@@ -48,16 +49,16 @@ class Plugin:
         }
 
         op, result = Plugin.send_recv(data)
-        logger.info("result %s", result)
+        logger.debug("result %s", result)
 
         return True
 
-    async def update_activity(self, appId, name, startTime):
+    async def update_activity(self, activity):
         global connected
 
-        logger.info('Called update activity: %s %s %s', appId, name, startTime)
+        logger.info('Updating activity: %s', activity['details']['name'])
         if not connected:
-            logger.debug("Not connected... attempting to reconnect")
+            logger.debug("Not connected, attempting to reconnect")
             await self.connect(self)
 
         data = {
@@ -66,13 +67,13 @@ class Plugin:
                 'pid': os.getpid(),
                 'activity': {
                     'state': 'on Steam Deck',
-                    'details': 'Playing {}'.format(name),
+                    'details': 'Playing {}'.format(activity['details']['name']),
                     'assets': {
-                        'large_image': 'https://cdn.akamai.steamstatic.com/steam/apps/{}/hero_capsule.jpg'.format(appId),
+                        'large_image': activity['imageUrl'],
                         'small_image': 'steamdeck-icon'
                     },
                     'timestamps': {
-                        'start': startTime
+                        'start': activity['startTime']
                     }
                 }
             },
@@ -80,11 +81,12 @@ class Plugin:
         }
 
         op, result = Plugin.send_recv(data)
-        logger.info("result %s", result)
+        logger.debug("result %s", result)
 
         return True
 
     async def reconnect(self):
+        global connecting
         global connected
 
         if connected:
@@ -93,6 +95,9 @@ class Plugin:
             if connected:
                 logger.debug("Already connected")
                 return True
+        
+        if connecting:
+            pass
 
         logger.info("Attempting to reconnect")
         await self.connect(self)
@@ -101,16 +106,20 @@ class Plugin:
 
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
+        global connecting
         global connected
         global client
 
-        logger.info("Starting Steam Deck Discord Status")
+        logger.info("Starting Discord status plugin")
         connected = False
+        connecting = False
 
         await self.connect(self)
     
     # Function called first during the unload process, utilize this to handle your plugin being removed
     async def _unload(self):
+        global connecting
+        connecting = False
         if connected:
             logger.info("Closing connection")
             self.close(self)
@@ -120,18 +129,20 @@ class Plugin:
     async def connect(self):
         global client
         global connected
+        global connecting
 
+        connecting = True
         tries = 0
         socketPath = '/run/user/1000/app/com.discordapp.Discord/discord-ipc-0'
-        while not connected and tries < 5:
+        while not connected and tries < 5 and connecting:
             tries = tries + 1
             if not os.path.exists(socketPath):
                 logger.debug('Socket file does not exist')
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
                 continue
 
             client = socket.socket(socket.AF_UNIX)
-            logger.debug('Attempting to connect to socket...')
+            logger.debug('Attempting to connect to socket')
             try:
                 client.connect(socketPath)
                 await self._handshake(self)
@@ -154,22 +165,24 @@ class Plugin:
                 await asyncio.sleep(5)
             except BaseException as e:
                 logger.error("Some other error occurred: {}".format(e))
+        connecting = False
 
     def close(self):
         global connected
+        global connecting
         global client
 
+        connecting = False
+
         try:
-            self.send({}, op=OP_CLOSE)
-        finally:
-            try:
-                if (client):
-                    client.close()
-            except BrokenPipeError as e:
-                client = None
-                logger.warn("Pipe is broken, client closed unexpectedly")
-            connected = False
-            logger.info("Closed")
+            if (client):
+                client.close()
+        except BrokenPipeError as e:
+            client = None
+            logger.warn("Pipe is broken, client closed unexpectedly")
+
+        connected = False
+        logger.info("Socket closed")
 
     async def _handshake(self):
         global connected
@@ -180,7 +193,7 @@ class Plugin:
         ret_op, ret_data = Plugin.send_recv({'v': 1, 'client_id': CLIENT_ID}, op=OP_HANDSHAKE)
         if ret_op == OP_FRAME and ret_data['cmd'] == 'DISPATCH' and ret_data['evt'] == 'READY':
             connected = True
-            logger.info('All set')
+            logger.info('Connected')
 
             return
         else:

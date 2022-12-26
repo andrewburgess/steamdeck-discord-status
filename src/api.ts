@@ -1,4 +1,5 @@
 import { ServerAPI } from 'decky-frontend-lib';
+import { Hook } from './SteamClient';
 
 export interface Activity {
     appId: string;
@@ -6,55 +7,59 @@ export interface Activity {
         name: string;
     };
     startTime: number;
-    gameInfo: any;
+    imageUrl: string;
 }
 
-interface Hook {
-    unregister: () => void;
-}
-
-interface UpdateActivity {
-    appId: string;
-    name: string;
-    startTime: number;
-}
+const NONSTEAM_APP_TYPE = 1073741824;
 
 export class Api {
     private static instance: Api;
 
-    private _runningActivity: Activity | null;
+    private _activities: {
+        [appId: string]: Activity;
+    };
+    public get activities() {
+        return this._activities;
+    }
+
+    private _runningActivity: string | null;
     public get runningActivity(): Activity | null {
-        return this._runningActivity;
+        if (this._runningActivity) {
+            return this._activities[this._runningActivity];
+        }
+        return null;
     }
     private set runningActivity(activity: Activity | null) {
-        this._runningActivity = activity;
+        if (activity) {
+            this._runningActivity = activity.appId;
+        } else {
+            this._runningActivity = null;
+        }
     }
 
     private suspendTime: number = 0;
-    private onAppLifetimeNotificationHook: Hook;
-    private onGameActionTaskChangeHook: Hook;
-    private onResumeHook: Hook;
-    private onSuspendHook: Hook;
+    private hooks: Hook[];
     private serverApi: ServerAPI;
 
     private constructor(serverApi: ServerAPI) {
+        this._activities = {};
         this._runningActivity = null;
         this.serverApi = serverApi;
+        this.hooks = [];
 
-        this.onAppLifetimeNotificationHook =
+        this.hooks.push(
             SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
                 this.onAppLifetimeNotification.bind(this)
-            );
-        this.onGameActionTaskChangeHook = SteamClient.Apps.RegisterForGameActionTaskChange(
-            this.onGameActionTaskChange.bind(this)
+            )
+        );
+        this.hooks.push(
+            SteamClient.Apps.RegisterForGameActionTaskChange(this.onGameActionTaskChange.bind(this))
         );
 
-        this.onResumeHook = SteamClient.System.RegisterForOnResumeFromSuspend(
-            this.onResume.bind(this)
+        this.hooks.push(
+            SteamClient.System.RegisterForOnResumeFromSuspend(this.onResume.bind(this))
         );
-        this.onSuspendHook = SteamClient.System.RegisterForOnSuspendRequest(
-            this.onSuspend.bind(this)
-        );
+        this.hooks.push(SteamClient.System.RegisterForOnSuspendRequest(this.onSuspend.bind(this)));
     }
 
     public static initialize(serverApi: ServerAPI) {
@@ -70,18 +75,10 @@ export class Api {
     }
 
     public unregister(): void {
-        this.onAppLifetimeNotificationHook.unregister();
-        this.onGameActionTaskChangeHook.unregister();
-        this.onResumeHook.unregister();
-        this.onSuspendHook.unregister();
+        this.hooks.forEach((hook) => hook.unregister());
     }
 
     public async clearActivity(): Promise<boolean> {
-        await this.debug({
-            message: 'clearActivity',
-            runningActivity: this.runningActivity
-        });
-
         if (this.runningActivity) {
             const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
 
@@ -92,17 +89,10 @@ export class Api {
     }
 
     public async updateActivity(activity: Activity): Promise<boolean> {
-        await this.debug({
-            message: 'updateActivity',
-            activity
-        });
-
-        const result = await this.serverApi.callPluginMethod<UpdateActivity, boolean>(
+        const result = await this.serverApi.callPluginMethod<{ activity: Activity }, boolean>(
             'update_activity',
             {
-                appId: activity.appId,
-                name: activity.details.name,
-                startTime: activity.startTime
+                activity
             }
         );
 
@@ -115,18 +105,28 @@ export class Api {
     }
 
     protected async onAppLifetimeNotification(app: any) {
-        await this.debug({
-            message: 'lifetimeNotification',
-            app,
-            runningActivity: this.runningActivity
-        });
+        let appId = app.unAppID.toString();
+
+        if (appId === '0') {
+            appId = app.nInstanceId.toString();
+        }
 
         if (!app.bRunning) {
-            if (app.unAppID.toString() === this.runningActivity?.appId) {
+            if (appId === this.runningActivity?.appId) {
                 const cleared = await this.clearActivity();
                 if (cleared) {
                     this.runningActivity = null;
                 }
+            }
+
+            if (this._activities[appId]) {
+                delete this._activities[appId];
+            }
+        } else {
+            if (this.runningActivity?.appId === '0') {
+                this.runningActivity.appId = appId;
+                this._activities[appId] = this.runningActivity;
+                delete this._activities['0'];
             }
         }
     }
@@ -141,53 +141,64 @@ export class Api {
         action: string,
         status: string
     ) {
-        await this.debug({
-            _actionType,
-            appId,
-            action,
-            status
-        });
+        const gameInfo = appStore.GetAppOverviewByGameID(appId);
+        const appIdToSet = gameInfo.app_type === NONSTEAM_APP_TYPE ? '0' : appId;
+
         if (action === 'LaunchApp' && status === 'Completed') {
-            const gameInfo = appStore.GetAppOverviewByGameID(appId);
+            const image =
+                gameInfo.app_type === NONSTEAM_APP_TYPE
+                    ? 'steamdeck'
+                    : appStore.GetVerticalCapsuleURLForApp(gameInfo);
 
             // TODO: Handle this better
-            if (gameInfo.display_name.toLowerCase().includes('discord')) {
-                await this.reconnect();
+            if (
+                gameInfo.app_type === NONSTEAM_APP_TYPE &&
+                gameInfo.display_name.toLowerCase().includes('discord')
+            ) {
+                const connected = await this.reconnect();
+                if (connected && this.runningActivity) {
+                    await this.updateActivity(this.runningActivity);
+                }
             } else {
-                this.runningActivity = {
+                this._activities[appIdToSet] = {
                     appId,
                     details: {
                         name: gameInfo.display_name
                     },
-                    gameInfo,
+                    imageUrl: image,
                     startTime: Date.now()
                 };
-                const launched = await this.updateActivity(this.runningActivity);
-                if (!launched) {
-                    this.runningActivity = null;
-                }
+
+                this._runningActivity = appIdToSet;
+                await this.updateActivity(this._activities[appIdToSet]);
             }
+        } else {
+            await this.debug({
+                message: 'taskChange',
+                appId: appIdToSet,
+                action,
+                status,
+                gameInfo: {
+                    ...gameInfo,
+                    icon_data: ''
+                }
+            });
         }
     }
 
     protected async onResume() {
-        await this.debug({
-            message: 'on resume'
+        Object.values(this.activities).forEach((activity) => {
+            activity.startTime = activity.startTime + (Date.now() - this.suspendTime);
         });
+
         if (this.runningActivity) {
-            // Move startTime up by the amount of time suspended so that
-            // playtime in Discord is somewhat accurate
-            this.runningActivity.startTime =
-                this.runningActivity.startTime + (Date.now() - this.suspendTime);
             await this.updateActivity(this.runningActivity);
-            this.suspendTime = 0;
         }
+
+        this.suspendTime = 0;
     }
 
     protected async onSuspend() {
-        await this.debug({
-            message: 'on suspend'
-        });
         if (this.runningActivity) {
             this.suspendTime = Date.now();
             await this.clearActivity();

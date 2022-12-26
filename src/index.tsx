@@ -1,12 +1,15 @@
 import {
     ButtonItem,
     definePlugin,
+    Field,
     PanelSection,
+    PanelSectionRow,
     ServerAPI,
+    Spinner,
     staticClasses
 } from 'decky-frontend-lib';
 import { useCallback, useEffect, useState, VFC } from 'react';
-import { FaDiscord } from 'react-icons/fa';
+import { FaCheck, FaDiscord } from 'react-icons/fa';
 import { Api } from './api';
 
 const Content: VFC<{ api: Api }> = ({ api }) => {
@@ -30,22 +33,27 @@ const Content: VFC<{ api: Api }> = ({ api }) => {
         setConnected(reconnected);
     }, [api]);
 
-    let status = 'Connected';
-    if (!connected && loading) {
-        status = 'Checking connection status...';
-    } else if (!connected && !loading) {
-        status = 'Reconnect to Discord';
-    }
-
     return (
-        <PanelSection title="Discord Status">
-            <ButtonItem disabled={connected || loading} layout="below" onClick={onClick}>
-                {status}
-            </ButtonItem>
-            {api.runningActivity ? (
-                <pre>{JSON.stringify(api.runningActivity.gameInfo, null, 2)}</pre>
-            ) : (
-                <div>No activity is running...</div>
+        <PanelSection>
+            <div></div>
+            {!connected && loading && (
+                <PanelSectionRow>
+                    <Field label="Checking connection status...">
+                        <Spinner />
+                    </Field>
+                </PanelSectionRow>
+            )}
+            {!connected && !loading && (
+                <ButtonItem layout="below" onClick={onClick}>
+                    Reconnect to Discord
+                </ButtonItem>
+            )}
+            {connected && !loading && (
+                <PanelSectionRow>
+                    <Field label="Connected">
+                        <FaCheck />
+                    </Field>
+                </PanelSectionRow>
             )}
         </PanelSection>
     );

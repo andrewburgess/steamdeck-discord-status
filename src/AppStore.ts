@@ -14,18 +14,18 @@ export interface AppStore {
     AsyncGetLocalizationForStoreTag: any;
     sharedLibraryAccountIds: any;
     siteLicenseApps: any;
+    GetCachedLandscapeImageURLForApp: any;
+    GetCachedVerticalCapsuleURL: any;
+    GetCustomHeroImageURLs: any;
+    GetCustomImageURLs: any;
+    GetCustomLandcapeImageURLs: any;
+    GetCustomLogoImageURLs: any;
+    GetCustomVerticalCapsuleURLs: any;
     GetIconURLForApp: any;
     GetLandscapeImageURLForApp: any;
-    GetCachedLandscapeImageURLForApp: any;
-    GetVerticalCapsuleURLForApp: any;
     GetPregeneratedVerticalCapsuleForApp: any;
-    GetCachedVerticalCapsuleURL: any;
-    GetCustomImageURLs: any;
-    GetCustomVerticalCapsuleURLs: any;
-    GetCustomLandcapeImageURLs: any;
-    GetCustomHeroImageURLs: any;
-    GetCustomLogoImageURLs: any;
     GetStorePageURLForApp: any;
+    GetVerticalCapsuleURLForApp: any;
 }
 
 export interface AppDetailsStore {
