@@ -2,6 +2,8 @@
 
 Updates Discord Rich Presence with the currently running game while on Steam Deck.
 
-## Notes
+## Future Improvements
 
-Discord needs to be running before launching the game (TODO: try to support this at a later time)
+-   Better detection of Discord being launched (currently depends on non-Steam application with name set to "Discord")
+-   Current application switcher, to better handle having multiple applications running, and sending the correct one for
+    the "currently playing" status
