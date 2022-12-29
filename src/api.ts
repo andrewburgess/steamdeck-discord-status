@@ -188,7 +188,8 @@ export class Api {
 
     protected async onResume() {
         Object.values(this.activities).forEach((activity) => {
-            activity.startTime = activity.startTime + (Date.now() - this.suspendTime);
+            const previousPlaytime = this.suspendTime - activity.startTime;
+            activity.startTime = Date.now() - previousPlaytime;
         });
 
         if (this.runningActivity) {
