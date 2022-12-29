@@ -172,17 +172,6 @@ export class Api {
                 this._runningActivity = appIdToSet;
                 await this.updateActivity(this._activities[appIdToSet]);
             }
-        } else {
-            await this.debug({
-                message: 'taskChange',
-                appId: appIdToSet,
-                action,
-                status,
-                gameInfo: {
-                    ...gameInfo,
-                    icon_data: ''
-                }
-            });
         }
     }
 
