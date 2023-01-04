@@ -6,11 +6,11 @@ import socket
 import struct
 import uuid
 
-CLIENT_ID = '1055680235682672682'
+CLIENT_ID = "1055680235682672682"
 
 logging.basicConfig(filename="/tmp/discord-status.log",
-                    format='[Template] %(asctime)s %(levelname)s %(message)s',
-                    filemode='w+',
+                    format="[Template] %(asctime)s %(levelname)s %(message)s",
+                    filemode="w+",
                     force=True)
 logger=logging.getLogger()
 logger.setLevel(logging.INFO) # can be changed to logging.DEBUG for debugging issues
@@ -35,17 +35,17 @@ class Plugin:
     async def clear_activity(self):
         global connected
         
-        logger.info('Clearing activity')
+        logger.info("Clearing activity")
 
         if not connected:
             await self.connect(self)
 
         data = {
-            'cmd': 'SET_ACTIVITY',
-            'args': {
-                'pid': os.getpid()
+            "cmd": "SET_ACTIVITY",
+            "args": {
+                "pid": os.getpid()
             },
-            'nonce': str(uuid.uuid4())
+            "nonce": str(uuid.uuid4())
         }
 
         op, result = Plugin.send_recv(data)
@@ -56,28 +56,28 @@ class Plugin:
     async def update_activity(self, activity):
         global connected
 
-        logger.info('Updating activity: %s', activity['details']['name'])
+        logger.info("Updating activity: %s", activity["details"]["name"])
         if not connected:
             logger.debug("Not connected, attempting to reconnect")
             await self.connect(self)
 
         data = {
-            'cmd': 'SET_ACTIVITY',
-            'args': {
-                'pid': os.getpid(),
-                'activity': {
-                    'state': 'on Steam Deck',
-                    'details': 'Playing {}'.format(activity['details']['name']),
-                    'assets': {
-                        'large_image': activity['imageUrl'],
-                        'small_image': 'steamdeck-icon'
+            "cmd": "SET_ACTIVITY",
+            "args": {
+                "pid": os.getpid(),
+                "activity": {
+                    "state": "on Steam Deck",
+                    "details": "Playing {}".format(activity["details"]["name"]),
+                    "assets": {
+                        "large_image": activity["imageUrl"],
+                        "small_image": "steamdeck-icon"
                     },
-                    'timestamps': {
-                        'start': activity['startTime']
+                    "timestamps": {
+                        "start": activity["startTime"]
                     }
                 }
             },
-            'nonce': str(uuid.uuid4())
+            "nonce": str(uuid.uuid4())
         }
 
         op, result = Plugin.send_recv(data)
@@ -133,16 +133,19 @@ class Plugin:
 
         connecting = True
         tries = 0
-        socketPath = '/run/user/1000/app/com.discordapp.Discord/discord-ipc-0'
+        
         while not connected and tries < 5 and connecting:
             tries = tries + 1
-            if not os.path.exists(socketPath):
-                logger.debug('Socket file does not exist')
+            socketPath = self._get_socket_path(self)
+            if socketPath == None:
+                logger.debug("Socket file does not exist")
                 await asyncio.sleep(2)
                 continue
+            else:
+                logger.info("Socket file found at {}".format(socketPath))
 
             client = socket.socket(socket.AF_UNIX)
-            logger.debug('Attempting to connect to socket')
+            logger.debug("Attempting to connect to socket")
             try:
                 client.connect(socketPath)
                 await self._handshake(self)
@@ -184,16 +187,30 @@ class Plugin:
         connected = False
         logger.info("Socket closed")
 
+    def _get_socket_path(self):
+        flatPakRoot = "/run/user/1000/app/com.discordapp.Discord"
+        otherRoot = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/1000"
+
+        for i in range(10):
+            path = os.path.join(flatPakRoot, "discord-ipc-{}".format(i))
+            if os.path.exists(path):
+                return path
+            path = os.path.join(otherRoot, "discord-ipc-{}".format(i))
+            if os.path.exists(path):
+                return path
+        
+        return None
+
     async def _handshake(self):
         global connected
 
         if client is None:
             return self.connect(self)
 
-        ret_op, ret_data = Plugin.send_recv({'v': 1, 'client_id': CLIENT_ID}, op=OP_HANDSHAKE)
-        if ret_op == OP_FRAME and ret_data['cmd'] == 'DISPATCH' and ret_data['evt'] == 'READY':
+        ret_op, ret_data = Plugin.send_recv({"v": 1, "client_id": CLIENT_ID}, op=OP_HANDSHAKE)
+        if ret_op == OP_FRAME and ret_data["cmd"] == "DISPATCH" and ret_data["evt"] == "READY":
             connected = True
-            logger.info('Connected')
+            logger.info("Connected")
 
             return
         else:
@@ -227,8 +244,8 @@ class Plugin:
 
     def send(data, op=OP_FRAME):
         logger.debug("sending %s", data)
-        data_str = json.dumps(data, separators=(',', ':'))
-        data_bytes = data_str.encode('utf-8')
+        data_str = json.dumps(data, separators=(",", ":"))
+        data_bytes = data_str.encode("utf-8")
         header = struct.pack("<II", op, len(data_bytes))
         Plugin._write(header)
         Plugin._write(data_bytes)
@@ -236,7 +253,7 @@ class Plugin:
     def recv():
         op, length = Plugin._recv_header()
         payload = Plugin._recv_exactly(length)
-        data = json.loads(payload.decode('utf-8'))
+        data = json.loads(payload.decode("utf-8"))
         logger.debug("received %s", data)
         return op, data
 
