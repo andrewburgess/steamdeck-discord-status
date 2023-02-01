@@ -9,7 +9,7 @@ import uuid
 CLIENT_ID = "1055680235682672682"
 
 logging.basicConfig(filename="/tmp/discord-status.log",
-                    format="[Template] %(asctime)s %(levelname)s %(message)s",
+                    format="[DiscordStatus] %(asctime)s %(levelname)s %(message)s",
                     filemode="w+",
                     force=True)
 logger=logging.getLogger()
