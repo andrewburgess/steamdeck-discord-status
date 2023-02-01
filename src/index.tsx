@@ -35,7 +35,6 @@ const Content: VFC<{ api: Api }> = ({ api }) => {
 
     return (
         <PanelSection>
-            <div></div>
             {!connected && loading && (
                 <PanelSectionRow>
                     <Field label="Checking connection status...">

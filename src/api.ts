@@ -31,7 +31,7 @@ export class Api {
     }
     private set runningActivity(activity: Activity | null) {
         if (activity) {
-            this._runningActivity = activity.appId;
+            this._runningActivity = activity.appId || '0';
         } else {
             this._runningActivity = null;
         }
@@ -107,10 +107,6 @@ export class Api {
     protected async onAppLifetimeNotification(app: any) {
         let appId = app.unAppID.toString();
 
-        if (appId === '0') {
-            appId = app.nInstanceId.toString();
-        }
-
         if (!app.bRunning) {
             if (appId === this.runningActivity?.appId) {
                 const cleared = await this.clearActivity();
@@ -121,12 +117,6 @@ export class Api {
 
             if (this._activities[appId]) {
                 delete this._activities[appId];
-            }
-        } else {
-            if (this.runningActivity?.appId === '0') {
-                this.runningActivity.appId = appId;
-                this._activities[appId] = this.runningActivity;
-                delete this._activities['0'];
             }
         }
     }
@@ -161,7 +151,7 @@ export class Api {
                 }
             } else {
                 this._activities[appIdToSet] = {
-                    appId,
+                    appId: appIdToSet,
                     details: {
                         name: gameInfo.display_name
                     },
@@ -170,6 +160,7 @@ export class Api {
                 };
 
                 this._runningActivity = appIdToSet;
+
                 await this.updateActivity(this._activities[appIdToSet]);
             }
         }
