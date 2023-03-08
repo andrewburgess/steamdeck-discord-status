@@ -5,6 +5,6 @@
     "publish": {
         "tags": ["discord"],
         "description": "Displays current Steam Deck game in Discord",
-        "image": "https://opengraph.githubassets.com/1/andrewburgess/steamdeck-discord-status"
+        "image": "https://github.com/andrewburgess/steamdeck-discord-status/blob/main/assets/screenshot.png?raw=true"
     }
 }
