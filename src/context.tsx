@@ -1,6 +1,6 @@
 import React, { createContext, useEffect, useReducer } from 'react';
 import { ActionsUnion, createAction, createActionPayload } from './actions';
-import { Api, Event } from './api';
+import { Activity, Api, Event } from './api';
 
 export enum ConnectionStatus {
     DISCONNECTED,
@@ -9,21 +9,35 @@ export enum ConnectionStatus {
 }
 
 interface State {
+    currentApp: Activity | null;
     connectionStatus: ConnectionStatus;
+    runningApps: Activity[];
 }
 
 const DEFAULT_STATE: State = {
-    connectionStatus: ConnectionStatus.DISCONNECTED
+    currentApp: null,
+    connectionStatus: ConnectionStatus.DISCONNECTED,
+    runningApps: []
 };
 
+export const ACTION_CHANGE_RUNNING_APP = 'action:change-running-app';
 export const ACTION_CONNECT = 'action:connect';
 export const ACTION_SET_CONNECTION_STATUS = 'action:set-connection-status';
+export const ACTION_SET_RUNNING_APP = 'action:set-running-app';
+export const ACTION_UPDATE_APPS = 'action:update-apps';
 
 export const Actions = {
+    changeRunningApp: createActionPayload<typeof ACTION_CHANGE_RUNNING_APP, Activity>(
+        ACTION_CHANGE_RUNNING_APP
+    ),
     connect: createAction<typeof ACTION_CONNECT>(ACTION_CONNECT),
     setConnectionStatus: createActionPayload<typeof ACTION_SET_CONNECTION_STATUS, ConnectionStatus>(
         ACTION_SET_CONNECTION_STATUS
-    )
+    ),
+    setRunningApp: createActionPayload<typeof ACTION_SET_RUNNING_APP, Activity | null>(
+        ACTION_SET_RUNNING_APP
+    ),
+    updateApps: createActionPayload<typeof ACTION_UPDATE_APPS, Activity[]>(ACTION_UPDATE_APPS)
 };
 
 export type AcceptedActions = ActionsUnion<typeof Actions>;
@@ -42,6 +56,16 @@ function reducer(state: State, action: AcceptedActions): State {
                 ...state,
                 connectionStatus: action.payload
             };
+        case ACTION_SET_RUNNING_APP:
+            return {
+                ...state,
+                currentApp: action.payload
+            };
+        case ACTION_UPDATE_APPS:
+            return {
+                ...state,
+                runningApps: action.payload
+            };
         default:
             return state;
     }
@@ -50,6 +74,9 @@ function reducer(state: State, action: AcceptedActions): State {
 function enhancedDispatch(api: Api, dispatch: React.Dispatch<AcceptedActions>, state: State) {
     return async (action: AcceptedActions) => {
         switch (action.type) {
+            case ACTION_CHANGE_RUNNING_APP:
+                await api.updateActivity(action.payload);
+                break;
             case ACTION_CONNECT:
                 dispatch(Actions.setConnectionStatus(ConnectionStatus.CONNECTING));
 
@@ -88,13 +115,24 @@ const Provider: React.FC<ProviderProps> = (props) => {
             )
             .on(Event.connecting, () =>
                 dispatch(Actions.setConnectionStatus(ConnectionStatus.CONNECTING))
-            );
+            )
+            .on(Event.update, () => {
+                dispatch(Actions.updateApps(Object.values(props.api.activities)));
+                dispatch(Actions.setRunningApp(props.api.runningActivity));
+            });
 
         dispatch(
             Actions.setConnectionStatus(
                 props.api.connected ? ConnectionStatus.CONNECTED : ConnectionStatus.DISCONNECTED
             )
         );
+
+        dispatch(Actions.updateApps(Object.values(props.api.activities)));
+        dispatch(Actions.setRunningApp(props.api.runningActivity));
+
+        if (!props.api.connected) {
+            dispatch(Actions.connect());
+        }
 
         return () => {
             props.api.removeAllListeners();

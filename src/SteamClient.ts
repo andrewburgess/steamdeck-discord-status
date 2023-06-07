@@ -34,7 +34,7 @@ export interface AppLifetimeNotification {
     unAppID: number;
 }
 
-interface AppOverview {
+export interface AppOverview {
     app_type: AppType;
     appid: number;
     canonicalAppType: number;

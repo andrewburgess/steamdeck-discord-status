@@ -1,6 +1,6 @@
-import { ServerAPI } from 'decky-frontend-lib';
+import { Router, ServerAPI } from 'decky-frontend-lib';
 import { EventEmitter } from 'eventemitter3';
-import { AppLifetimeNotification, AppType, Hook } from './SteamClient';
+import { AppLifetimeNotification, AppOverview, AppType, Hook } from './SteamClient';
 import { logger } from './util';
 
 const log = logger('API');
@@ -18,12 +18,21 @@ export interface Activity {
     };
     startTime: number;
     imageUrl: string;
+    localImageUrl: string;
 }
 
 export enum Event {
     connect = 'connect',
     connecting = 'connecting',
-    disconnect = 'disconnect'
+    disconnect = 'disconnect',
+    update = 'update'
+}
+
+function isDiscord(appInfo: AppOverview) {
+    return (
+        appInfo.app_type === AppType.Shortcut &&
+        appInfo.display_name.toLowerCase().includes('discord')
+    );
 }
 
 export class Api extends EventEmitter {
@@ -77,6 +86,47 @@ export class Api extends EventEmitter {
             SteamClient.System.RegisterForOnResumeFromSuspend(this.onResume.bind(this))
         );
         this.hooks.push(SteamClient.System.RegisterForOnSuspendRequest(this.onSuspend.bind(this)));
+
+        Router.RunningApps.forEach((app) => {
+            const appId = app.appid.toString();
+            const gameInfo = appStore.GetAppOverviewByGameID(appId);
+            if (isDiscord(gameInfo)) {
+                return;
+            }
+
+            const image =
+                gameInfo.app_type === AppType.Shortcut
+                    ? 'steamdeck'
+                    : appStore.GetVerticalCapsuleURLForApp(gameInfo);
+            let localImageUrl = image;
+            if (gameInfo.app_type === AppType.Shortcut) {
+                const urls = appStore.GetCustomVerticalCapsuleURLs(gameInfo);
+                if (urls.length) {
+                    localImageUrl = urls[urls.length - 1];
+                }
+            }
+
+            log('Storing activity for', appId, gameInfo.display_name);
+            this.activities[appId.toString()] = {
+                appId: appId,
+                details: {
+                    name: gameInfo.display_name
+                },
+                startTime: Date.now(),
+                imageUrl: image,
+                localImageUrl: localImageUrl
+            };
+        });
+
+        if (Router.MainRunningApp) {
+            const gameInfo = appStore.GetAppOverviewByGameID(
+                Router.MainRunningApp.appid.toString()
+            );
+            if (!isDiscord(gameInfo)) {
+                log('Setting running activity to', Router.MainRunningApp.appid.toString());
+                this._runningActivity = Router.MainRunningApp.appid.toString();
+            }
+        }
     }
 
     public static initialize(serverApi: ServerAPI) {
@@ -86,6 +136,7 @@ export class Api extends EventEmitter {
     }
 
     public async reconnect(): Promise<boolean> {
+        log('Reconnecting');
         this.emit(Event.connecting);
 
         const result = await this.serverApi.callPluginMethod<{}, boolean>('reconnect', {});
@@ -93,8 +144,14 @@ export class Api extends EventEmitter {
         this._connected = result.success && result.result;
 
         if (this._connected) {
+            log('Connected');
             this.emit(Event.connect);
+
+            if (this.runningActivity) {
+                await this.updateActivity(this.runningActivity);
+            }
         } else {
+            log('Disconnected');
             this.emit(Event.disconnect);
         }
 
@@ -107,12 +164,18 @@ export class Api extends EventEmitter {
     }
 
     public async clearActivity(): Promise<boolean> {
+        log('Clearing activity', this.runningActivity?.appId);
         const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
+
+        this.runningActivity = null;
+
+        this.emit('update');
 
         return result.success && result.result;
     }
 
     public async updateActivity(activity: Activity): Promise<boolean> {
+        log('Updating activity', activity);
         const result = await this.serverApi.callPluginMethod<{ activity: Activity }, boolean>(
             'update_activity',
             {
@@ -122,6 +185,8 @@ export class Api extends EventEmitter {
 
         if (result.success && result.result) {
             this.runningActivity = activity;
+
+            this.emit('update');
             return true;
         }
 
@@ -129,8 +194,6 @@ export class Api extends EventEmitter {
     }
 
     protected async onAppLifetimeNotification(app: AppLifetimeNotification) {
-        log('onAppLifetimeNotification', ...arguments);
-
         const gameId = app.unAppID.toString();
 
         const gameInfo = appStore.GetAppOverviewByGameID(gameId);
@@ -141,22 +204,27 @@ export class Api extends EventEmitter {
                     ? 'steamdeck'
                     : appStore.GetVerticalCapsuleURLForApp(gameInfo);
 
-            if (
-                gameInfo.app_type === AppType.Shortcut &&
-                gameInfo.display_name.toLowerCase().includes('discord')
-            ) {
+            if (isDiscord(gameInfo)) {
                 const connected = await this.reconnect();
                 if (connected && this.runningActivity) {
                     await this.updateActivity(this.runningActivity);
                 }
             } else {
+                let localImageUrl = image;
+                if (gameInfo.app_type === AppType.Shortcut) {
+                    const urls = appStore.GetCustomVerticalCapsuleURLs(gameInfo);
+                    if (urls.length) {
+                        localImageUrl = urls[urls.length - 1];
+                    }
+                }
                 this._activities[gameId] = {
                     appId: gameId,
                     details: {
                         name: gameInfo.display_name
                     },
                     startTime: Date.now(),
-                    imageUrl: image
+                    imageUrl: image,
+                    localImageUrl
                 };
 
                 this._runningActivity = gameId;
