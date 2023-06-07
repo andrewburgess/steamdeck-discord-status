@@ -46,3 +46,7 @@ yalc.lock
 backend/out
 .stignore
 .stfolder
+
+out
+cli
+dist

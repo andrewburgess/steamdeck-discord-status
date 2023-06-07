@@ -8,46 +8,34 @@ import {
     Spinner,
     staticClasses
 } from 'decky-frontend-lib';
-import { useCallback, useEffect, useState, VFC } from 'react';
+import { useCallback, useContext, VFC } from 'react';
 import { FaCheck, FaDiscord } from 'react-icons/fa';
 import { Api } from './api';
+import { Actions, ConnectionStatus, Context, Provider } from './context';
 
-const Content: VFC<{ api: Api }> = ({ api }) => {
-    const [connected, setConnected] = useState(false);
-    const [loading, setLoading] = useState(false);
-
-    useEffect(() => {
-        const onLoad = async () => {
-            setLoading(true);
-            const reconnected = await api.reconnect();
-            setLoading(false);
-            setConnected(reconnected);
-        };
-        onLoad();
-    }, [api]);
+const Content: VFC<{}> = () => {
+    const [state, dispatch] = useContext(Context);
 
     const onClick = useCallback(async () => {
-        setLoading(true);
-        const reconnected = await api.reconnect();
-        setLoading(false);
-        setConnected(reconnected);
-    }, [api]);
+        dispatch(Actions.connect());
+    }, [dispatch]);
 
     return (
         <PanelSection>
-            {!connected && loading && (
+            <div>Hello</div>
+            {state.connectionStatus === ConnectionStatus.CONNECTING && (
                 <PanelSectionRow>
                     <Field label="Checking connection status...">
                         <Spinner />
                     </Field>
                 </PanelSectionRow>
             )}
-            {!connected && !loading && (
+            {state.connectionStatus === ConnectionStatus.DISCONNECTED && (
                 <ButtonItem layout="below" onClick={onClick}>
                     Reconnect to Discord
                 </ButtonItem>
             )}
-            {connected && !loading && (
+            {state.connectionStatus === ConnectionStatus.CONNECTED && (
                 <PanelSectionRow>
                     <Field label="Connected">
                         <FaCheck />
@@ -60,10 +48,16 @@ const Content: VFC<{ api: Api }> = ({ api }) => {
 
 export default definePlugin((serverApi: ServerAPI) => {
     const api = Api.initialize(serverApi);
+    // Attempt to reconnect on load
+    api.reconnect().catch((e) => {});
 
     return {
         title: <div className={staticClasses.Title}>Discord Status</div>,
-        content: <Content api={api} />,
+        content: (
+            <Provider api={api}>
+                <Content />
+            </Provider>
+        ),
         icon: <FaDiscord />,
         onDismount: () => {
             api.unregister();

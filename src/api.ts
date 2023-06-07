@@ -1,5 +1,15 @@
 import { ServerAPI } from 'decky-frontend-lib';
-import { Hook } from './SteamClient';
+import { EventEmitter } from 'eventemitter3';
+import { AppLifetimeNotification, AppType, Hook } from './SteamClient';
+import { logger } from './util';
+
+const log = logger('API');
+
+enum StorageKeys {
+    Activities = 'discord-status:activities',
+    RunningActivity = 'discord-status:running-activity',
+    SuspendTime = 'discord-status:suspend-time'
+}
 
 export interface Activity {
     appId: string;
@@ -10,9 +20,13 @@ export interface Activity {
     imageUrl: string;
 }
 
-const NONSTEAM_APP_TYPE = 1073741824;
+export enum Event {
+    connect = 'connect',
+    connecting = 'connecting',
+    disconnect = 'disconnect'
+}
 
-export class Api {
+export class Api extends EventEmitter {
     private static instance: Api;
 
     private _activities: {
@@ -20,6 +34,11 @@ export class Api {
     };
     public get activities() {
         return this._activities;
+    }
+
+    private _connected: boolean = false;
+    public get connected() {
+        return this._connected;
     }
 
     private _runningActivity: string | null;
@@ -37,11 +56,12 @@ export class Api {
         }
     }
 
-    private suspendTime: number = 0;
     private hooks: Hook[];
     private serverApi: ServerAPI;
 
     private constructor(serverApi: ServerAPI) {
+        super();
+
         this._activities = {};
         this._runningActivity = null;
         this.serverApi = serverApi;
@@ -51,9 +71,6 @@ export class Api {
             SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
                 this.onAppLifetimeNotification.bind(this)
             )
-        );
-        this.hooks.push(
-            SteamClient.Apps.RegisterForGameActionTaskChange(this.onGameActionTaskChange.bind(this))
         );
 
         this.hooks.push(
@@ -69,23 +86,30 @@ export class Api {
     }
 
     public async reconnect(): Promise<boolean> {
+        this.emit(Event.connecting);
+
         const result = await this.serverApi.callPluginMethod<{}, boolean>('reconnect', {});
+
+        this._connected = result.success && result.result;
+
+        if (this._connected) {
+            this.emit(Event.connect);
+        } else {
+            this.emit(Event.disconnect);
+        }
 
         return result.success && result.result;
     }
 
     public unregister(): void {
+        this._connected = false;
         this.hooks.forEach((hook) => hook.unregister());
     }
 
     public async clearActivity(): Promise<boolean> {
-        if (this.runningActivity) {
-            const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
+        const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
 
-            return result.success && result.result;
-        }
-
-        return false;
+        return result.success && result.result;
     }
 
     public async updateActivity(activity: Activity): Promise<boolean> {
@@ -104,45 +128,21 @@ export class Api {
         return false;
     }
 
-    protected async onAppLifetimeNotification(app: any) {
-        let appId = app.unAppID.toString();
+    protected async onAppLifetimeNotification(app: AppLifetimeNotification) {
+        log('onAppLifetimeNotification', ...arguments);
 
-        if (!app.bRunning) {
-            if (appId === this.runningActivity?.appId) {
-                const cleared = await this.clearActivity();
-                if (cleared) {
-                    this.runningActivity = null;
-                }
-            }
+        const gameId = app.unAppID.toString();
 
-            if (this._activities[appId]) {
-                delete this._activities[appId];
-            }
-        }
-    }
+        const gameInfo = appStore.GetAppOverviewByGameID(gameId);
 
-    protected async debug(args: any) {
-        await this.serverApi.callPluginMethod<any, {}>('debug', { args });
-    }
-
-    protected async onGameActionTaskChange(
-        _actionType: number,
-        appId: string,
-        action: string,
-        status: string
-    ) {
-        const gameInfo = appStore.GetAppOverviewByGameID(appId);
-        const appIdToSet = gameInfo.app_type === NONSTEAM_APP_TYPE ? '0' : appId;
-
-        if (action === 'LaunchApp' && status === 'Completed') {
+        if (app.bRunning) {
             const image =
-                gameInfo.app_type === NONSTEAM_APP_TYPE
+                gameInfo.app_type === AppType.Shortcut
                     ? 'steamdeck'
                     : appStore.GetVerticalCapsuleURLForApp(gameInfo);
 
-            // TODO: Handle this better
             if (
-                gameInfo.app_type === NONSTEAM_APP_TYPE &&
+                gameInfo.app_type === AppType.Shortcut &&
                 gameInfo.display_name.toLowerCase().includes('discord')
             ) {
                 const connected = await this.reconnect();
@@ -150,25 +150,51 @@ export class Api {
                     await this.updateActivity(this.runningActivity);
                 }
             } else {
-                this._activities[appIdToSet] = {
-                    appId: appIdToSet,
+                this._activities[gameId] = {
+                    appId: gameId,
                     details: {
                         name: gameInfo.display_name
                     },
-                    imageUrl: image,
-                    startTime: Date.now()
+                    startTime: Date.now(),
+                    imageUrl: image
                 };
 
-                this._runningActivity = appIdToSet;
+                this._runningActivity = gameId;
+                await this.updateActivity(this._activities[gameId]);
+            }
+        } else {
+            if (gameId === this.runningActivity?.appId) {
+                const cleared = await this.clearActivity();
+                if (cleared) {
+                    this.runningActivity = null;
+                }
+            }
 
-                await this.updateActivity(this._activities[appIdToSet]);
+            if (this._activities[gameId]) {
+                delete this._activities[gameId];
             }
         }
     }
 
     protected async onResume() {
+        const suspendTimeValue = localStorage.getItem(StorageKeys.SuspendTime);
+        let suspendTime = 0;
+        if (suspendTimeValue) {
+            suspendTime = parseInt(suspendTimeValue, 10);
+        }
+
+        const activitiesValue = localStorage.getItem(StorageKeys.Activities);
+        if (activitiesValue) {
+            this._activities = JSON.parse(activitiesValue);
+        }
+
+        const runningActivityValue = localStorage.getItem(StorageKeys.RunningActivity);
+        if (runningActivityValue) {
+            this._runningActivity = runningActivityValue;
+        }
+
         Object.values(this.activities).forEach((activity) => {
-            const previousPlaytime = this.suspendTime - activity.startTime;
+            const previousPlaytime = suspendTime - activity.startTime;
             activity.startTime = Date.now() - previousPlaytime;
         });
 
@@ -176,12 +202,18 @@ export class Api {
             await this.updateActivity(this.runningActivity);
         }
 
-        this.suspendTime = 0;
+        localStorage.removeItem(StorageKeys.SuspendTime);
+        localStorage.removeItem(StorageKeys.Activities);
+        localStorage.removeItem(StorageKeys.RunningActivity);
     }
 
     protected async onSuspend() {
+        localStorage.setItem(StorageKeys.SuspendTime, Date.now().toString());
+
+        localStorage.setItem(StorageKeys.Activities, JSON.stringify(this.activities));
+
         if (this.runningActivity) {
-            this.suspendTime = Date.now();
+            localStorage.setItem(StorageKeys.RunningActivity, JSON.stringify(this.runningActivity));
             await this.clearActivity();
         }
     }
