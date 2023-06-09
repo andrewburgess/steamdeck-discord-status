@@ -269,7 +269,7 @@ export class Api extends EventEmitter {
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
                 const running = Router.MainRunningApp;
-                if (running && this.activities[running.appid.toString()]) {
+                if (running && this._activities[running.appid.toString()]) {
                     this._runningActivity = running.appid.toString();
                     await this.updateActivity(this._activities[this._runningActivity]);
 
