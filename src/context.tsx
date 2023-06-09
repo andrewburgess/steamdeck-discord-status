@@ -71,7 +71,7 @@ function reducer(state: State, action: AcceptedActions): State {
     }
 }
 
-function enhancedDispatch(api: Api, dispatch: React.Dispatch<AcceptedActions>, state: State) {
+function enhancedDispatch(api: Api, dispatch: React.Dispatch<AcceptedActions>) {
     return async (action: AcceptedActions) => {
         switch (action.type) {
             case ACTION_CHANGE_RUNNING_APP:
@@ -103,7 +103,7 @@ interface ProviderProps {
 const Provider: React.FC<ProviderProps> = (props) => {
     const [state, baseDispatch] = useReducer(reducer, DEFAULT_STATE);
 
-    const dispatch = enhancedDispatch(props.api, baseDispatch, state);
+    const dispatch = enhancedDispatch(props.api, baseDispatch);
 
     useEffect(() => {
         props.api

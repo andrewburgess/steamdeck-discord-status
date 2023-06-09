@@ -106,7 +106,7 @@ export class Api extends EventEmitter {
                 }
             }
 
-            log('Storing activity for', appId, gameInfo.display_name);
+            log('Initializing with activity', appId, gameInfo.display_name);
             this.activities[appId.toString()] = {
                 appId: appId,
                 details: {
@@ -190,6 +190,7 @@ export class Api extends EventEmitter {
             return true;
         }
 
+        log('Failed to update activity', result);
         return false;
     }
 
@@ -227,19 +228,45 @@ export class Api extends EventEmitter {
                     localImageUrl
                 };
 
+                const previousRunning = this.runningActivity;
+
                 this._runningActivity = gameId;
                 await this.updateActivity(this._activities[gameId]);
+
+                if (previousRunning && previousRunning.appId !== gameId) {
+                    this.serverApi.toaster.toast({
+                        title: 'Discord',
+                        body: `Now playing ${this._activities[gameId].details.name}`
+                    });
+                }
             }
         } else {
+            let wasCleared = false;
             if (gameId === this.runningActivity?.appId) {
                 const cleared = await this.clearActivity();
                 if (cleared) {
                     this.runningActivity = null;
+                    wasCleared = true;
                 }
             }
 
             if (this._activities[gameId]) {
                 delete this._activities[gameId];
+            }
+
+            if (wasCleared) {
+                // Let a new app pop up
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+
+                const running = Router.MainRunningApp;
+                if (running && this.activities[running.appid.toString()]) {
+                    this._runningActivity = running.appid.toString();
+                    await this.updateActivity(this._activities[this._runningActivity]);
+                    this.serverApi.toaster.toast({
+                        title: 'Discord',
+                        body: `Now playing ${this._activities[this._runningActivity].details.name}`
+                    });
+                }
             }
         }
     }
@@ -258,7 +285,7 @@ export class Api extends EventEmitter {
 
         const runningActivityValue = localStorage.getItem(StorageKeys.RunningActivity);
         if (runningActivityValue) {
-            this._runningActivity = runningActivityValue;
+            this.runningActivity = JSON.parse(runningActivityValue);
         }
 
         Object.values(this.activities).forEach((activity) => {
@@ -267,8 +294,16 @@ export class Api extends EventEmitter {
         });
 
         if (this.runningActivity) {
+            await this.reconnect();
+
             await this.updateActivity(this.runningActivity);
         }
+
+        log('Resuming', {
+            activities: this.activities,
+            runningActivity: this.runningActivity,
+            suspendTime
+        });
 
         localStorage.removeItem(StorageKeys.SuspendTime);
         localStorage.removeItem(StorageKeys.Activities);
@@ -277,12 +312,19 @@ export class Api extends EventEmitter {
 
     protected async onSuspend() {
         localStorage.setItem(StorageKeys.SuspendTime, Date.now().toString());
-
         localStorage.setItem(StorageKeys.Activities, JSON.stringify(this.activities));
 
         if (this.runningActivity) {
             localStorage.setItem(StorageKeys.RunningActivity, JSON.stringify(this.runningActivity));
             await this.clearActivity();
+            log(
+                'Suspending with running activity',
+                Date.now().toString(),
+                JSON.stringify(this.activities),
+                JSON.stringify(this.runningActivity)
+            );
+        } else {
+            log('Suspending', Date.now().toString(), JSON.stringify(this.activities));
         }
     }
 }
