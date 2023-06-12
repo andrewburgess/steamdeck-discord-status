@@ -35,6 +35,30 @@ function isDiscord(appInfo: AppOverview) {
     );
 }
 
+function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): Activity {
+    const image =
+        appInfo.app_type === AppType.Shortcut
+            ? 'steamdeck'
+            : appStore.GetVerticalCapsuleURLForApp(appInfo);
+    let localImageUrl = image;
+    if (appInfo.app_type === AppType.Shortcut) {
+        const urls = appStore.GetCustomVerticalCapsuleURLs(appInfo);
+        if (urls.length) {
+            localImageUrl = urls[urls.length - 1];
+        }
+    }
+
+    return {
+        appId: appInfo.appid.toString(),
+        details: {
+            name: appInfo.display_name
+        },
+        startTime: startTime?.getTime() ?? Date.now(),
+        imageUrl: image,
+        localImageUrl: localImageUrl
+    };
+}
+
 export class Api extends EventEmitter {
     private static instance: Api;
 
@@ -87,46 +111,7 @@ export class Api extends EventEmitter {
         );
         this.hooks.push(SteamClient.System.RegisterForOnSuspendRequest(this.onSuspend.bind(this)));
 
-        Router.RunningApps.forEach((app) => {
-            const appId = app.appid.toString();
-            const gameInfo = appStore.GetAppOverviewByGameID(appId);
-            if (isDiscord(gameInfo)) {
-                return;
-            }
-
-            const image =
-                gameInfo.app_type === AppType.Shortcut
-                    ? 'steamdeck'
-                    : appStore.GetVerticalCapsuleURLForApp(gameInfo);
-            let localImageUrl = image;
-            if (gameInfo.app_type === AppType.Shortcut) {
-                const urls = appStore.GetCustomVerticalCapsuleURLs(gameInfo);
-                if (urls.length) {
-                    localImageUrl = urls[urls.length - 1];
-                }
-            }
-
-            log('Initializing with activity', appId, gameInfo.display_name);
-            this.activities[appId.toString()] = {
-                appId: appId,
-                details: {
-                    name: gameInfo.display_name
-                },
-                startTime: Date.now(),
-                imageUrl: image,
-                localImageUrl: localImageUrl
-            };
-        });
-
-        if (Router.MainRunningApp) {
-            const gameInfo = appStore.GetAppOverviewByGameID(
-                Router.MainRunningApp.appid.toString()
-            );
-            if (!isDiscord(gameInfo)) {
-                log('Setting running activity to', Router.MainRunningApp.appid.toString());
-                this._runningActivity = Router.MainRunningApp.appid.toString();
-            }
-        }
+        this.updateActivityState();
     }
 
     public static initialize(serverApi: ServerAPI) {
@@ -155,6 +140,11 @@ export class Api extends EventEmitter {
             this.emit(Event.disconnect);
         }
 
+        this.updateActivityState();
+        if (this.runningActivity) {
+            await this.updateActivity(this.runningActivity);
+        }
+
         return result.success && result.result;
     }
 
@@ -164,6 +154,11 @@ export class Api extends EventEmitter {
     }
 
     public async clearActivity(): Promise<boolean> {
+        if (!this._connected) {
+            log('Not connected, not clearing activity');
+            return false;
+        }
+
         log('Clearing activity', this.runningActivity?.appId);
         const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
 
@@ -175,6 +170,13 @@ export class Api extends EventEmitter {
     }
 
     public async updateActivity(activity: Activity): Promise<boolean> {
+        this.runningActivity = activity;
+
+        if (!this._connected) {
+            log('Not connected, not updating activity');
+            return false;
+        }
+
         log('Updating activity', activity);
         const result = await this.serverApi.callPluginMethod<{ activity: Activity }, boolean>(
             'update_activity',
@@ -184,8 +186,6 @@ export class Api extends EventEmitter {
         );
 
         if (result.success && result.result) {
-            this.runningActivity = activity;
-
             this.emit('update');
             return true;
         }
@@ -194,46 +194,50 @@ export class Api extends EventEmitter {
         return false;
     }
 
+    public updateActivityState(): void {
+        Router.RunningApps.forEach((app) => {
+            const appId = app.appid.toString();
+            const gameInfo = appStore.GetAppOverviewByGameID(appId);
+            if (isDiscord(gameInfo)) {
+                return;
+            }
+
+            log('Initializing with activity', appId, gameInfo.display_name);
+            this.activities[appId.toString()] = convertAppOverviewToActivity(gameInfo);
+        });
+
+        if (Router.MainRunningApp && !this._runningActivity) {
+            const gameInfo = appStore.GetAppOverviewByGameID(
+                Router.MainRunningApp.appid.toString()
+            );
+            if (!isDiscord(gameInfo)) {
+                log('Setting running activity to', Router.MainRunningApp.appid.toString());
+                this._runningActivity = Router.MainRunningApp.appid.toString();
+            }
+        }
+    }
+
     protected async onAppLifetimeNotification(app: AppLifetimeNotification) {
         const gameId = app.unAppID.toString();
 
         const gameInfo = appStore.GetAppOverviewByGameID(gameId);
 
         if (app.bRunning) {
-            const image =
-                gameInfo.app_type === AppType.Shortcut
-                    ? 'steamdeck'
-                    : appStore.GetVerticalCapsuleURLForApp(gameInfo);
-
             if (isDiscord(gameInfo)) {
                 const connected = await this.reconnect();
                 if (connected && this.runningActivity) {
                     await this.updateActivity(this.runningActivity);
                 }
             } else {
-                let localImageUrl = image;
-                if (gameInfo.app_type === AppType.Shortcut) {
-                    const urls = appStore.GetCustomVerticalCapsuleURLs(gameInfo);
-                    if (urls.length) {
-                        localImageUrl = urls[urls.length - 1];
-                    }
-                }
-                this._activities[gameId] = {
-                    appId: gameId,
-                    details: {
-                        name: gameInfo.display_name
-                    },
-                    startTime: Date.now(),
-                    imageUrl: image,
-                    localImageUrl
-                };
+                const activity = convertAppOverviewToActivity(gameInfo);
+                this._activities[gameId] = activity;
 
                 const previousRunning = this.runningActivity;
 
                 this._runningActivity = gameId;
                 await this.updateActivity(this._activities[gameId]);
 
-                if (previousRunning && previousRunning.appId !== gameId) {
+                if (this.connected && previousRunning && previousRunning.appId !== gameId) {
                     this.serverApi.toaster.toast({
                         title: 'Discord',
                         body: `Now playing ${this._activities[gameId].details.name}`
@@ -241,6 +245,12 @@ export class Api extends EventEmitter {
                 }
             }
         } else {
+            if (isDiscord(gameInfo)) {
+                this._connected = false;
+                this.emit(Event.disconnect);
+                return;
+            }
+
             let wasCleared = false;
             if (gameId === this.runningActivity?.appId) {
                 const cleared = await this.clearActivity();
@@ -262,10 +272,15 @@ export class Api extends EventEmitter {
                 if (running && this.activities[running.appid.toString()]) {
                     this._runningActivity = running.appid.toString();
                     await this.updateActivity(this._activities[this._runningActivity]);
-                    this.serverApi.toaster.toast({
-                        title: 'Discord',
-                        body: `Now playing ${this._activities[this._runningActivity].details.name}`
-                    });
+
+                    if (this.connected) {
+                        this.serverApi.toaster.toast({
+                            title: 'Discord',
+                            body: `Now playing ${
+                                this._activities[this._runningActivity].details.name
+                            }`
+                        });
+                    }
                 }
             }
         }
