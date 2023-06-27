@@ -21,23 +21,31 @@ const QuickAccessPanel: VFC<{}> = () => {
         <PanelSection>
             <PanelSectionRow>
                 {state.connectionStatus === ConnectionStatus.CONNECTING && (
-                    <PanelSectionRow>
+                    <Fragment>
                         <Field childrenLayout="inline" label="Checking connection...">
                             <Spinner />
                         </Field>
-                    </PanelSectionRow>
+                        <div style={{padding: '4px 0px'}}>
+                            Discord must be running for this plugin to connect. 
+                        </div>
+                    </Fragment>
                 )}
                 {state.connectionStatus === ConnectionStatus.DISCONNECTED && (
-                    <ButtonItem layout="below" onClick={onClick}>
-                        Reconnect to Discord
-                    </ButtonItem>
+                    <Fragment>
+                        <ButtonItem layout="below" onClick={onClick}>
+                            Reconnect to Discord
+                        </ButtonItem>
+                        <div style={{padding: '4px 0px'}}>
+                            Discord must be running for this plugin to connect. 
+                        </div>
+                    </Fragment>
                 )}
                 {state.connectionStatus === ConnectionStatus.CONNECTED && (
-                    <PanelSectionRow>
+                    <Fragment>
                         <Field label="Connected">
                             <FaCheck />
                         </Field>
-                    </PanelSectionRow>
+                    </Fragment>
                 )}
             </PanelSectionRow>
             {state.connectionStatus === ConnectionStatus.CONNECTED && (
