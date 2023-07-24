@@ -148,28 +148,42 @@ export class Api extends EventEmitter {
         return result.success && result.result;
     }
 
+    public async disconnect(): Promise<void> {
+        log('Disconnecting');
+
+        await this.serverApi.callPluginMethod<{}, boolean>('disconnect', {});
+
+        this._connected = false;
+        this.emit(Event.disconnect);
+    }
+
     public unregister(): void {
         this._connected = false;
         this.hooks.forEach((hook) => hook.unregister());
     }
 
     public async clearActivity(): Promise<boolean> {
+        const appId = this.runningActivity?.appId;
+        this.runningActivity = null;
+
         if (!this._connected) {
             log('Not connected, not clearing activity');
             return false;
         }
 
-        log('Clearing activity', this.runningActivity?.appId);
+        log('Clearing activity', appId);
         const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
-
-        this.runningActivity = null;
 
         this.emit('update');
 
         return result.success && result.result;
     }
 
-    public async updateActivity(activity: Activity): Promise<boolean> {
+    public async updateActivity(activity: Activity | null): Promise<boolean> {
+        if (!activity) {
+            return this.clearActivity();
+        }
+
         this.runningActivity = activity;
 
         if (!this._connected) {
@@ -332,14 +346,17 @@ export class Api extends EventEmitter {
         if (this.runningActivity) {
             localStorage.setItem(StorageKeys.RunningActivity, JSON.stringify(this.runningActivity));
             await this.clearActivity();
-            log(
-                'Suspending with running activity',
-                Date.now().toString(),
-                JSON.stringify(this.activities),
-                JSON.stringify(this.runningActivity)
-            );
+            log('Suspending with running activity', {
+                suspendTime: Date.now().toString(),
+                activities: this.activities,
+                runningActivity: this.runningActivity
+            });
         } else {
             log('Suspending', Date.now().toString(), JSON.stringify(this.activities));
+        }
+
+        if (this._connected) {
+            await this.disconnect();
         }
     }
 }

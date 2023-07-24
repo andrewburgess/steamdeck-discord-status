@@ -27,7 +27,7 @@ export const ACTION_SET_RUNNING_APP = 'action:set-running-app';
 export const ACTION_UPDATE_APPS = 'action:update-apps';
 
 export const Actions = {
-    changeRunningApp: createActionPayload<typeof ACTION_CHANGE_RUNNING_APP, Activity>(
+    changeRunningApp: createActionPayload<typeof ACTION_CHANGE_RUNNING_APP, Activity | null>(
         ACTION_CHANGE_RUNNING_APP
     ),
     connect: createAction<typeof ACTION_CONNECT>(ACTION_CONNECT),

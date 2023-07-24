@@ -122,7 +122,7 @@ class Plugin:
         connecting = False
         if connected:
             logger.info("Closing connection")
-            self.close(self)
+            self.disconnect(self)
         else:
             logger.info("Wasn't connected")
 
@@ -170,7 +170,7 @@ class Plugin:
                 logger.error("Some other error occurred: {}".format(e))
         connecting = False
 
-    def close(self):
+    def disconnect(self):
         global connected
         global connecting
         global client

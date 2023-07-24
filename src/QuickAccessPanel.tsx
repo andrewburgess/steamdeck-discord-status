@@ -1,4 +1,4 @@
-import { Fragment, VFC, useCallback, useContext } from 'react';
+import { Fragment, VFC, useCallback, useContext, useMemo } from 'react';
 import { Actions, ConnectionStatus, Context } from './context';
 import {
     ButtonItem,
@@ -17,6 +17,20 @@ const QuickAccessPanel: VFC<{}> = () => {
         dispatch(Actions.connect());
     }, [dispatch]);
 
+    const options = useMemo(
+        () => [
+            ...state.runningApps.map((app) => ({
+                label: <Fragment>{app.details.name}</Fragment>,
+                data: app
+            })),
+            {
+                label: '<None>',
+                data: null
+            }
+        ],
+        [state]
+    );
+
     return (
         <PanelSection>
             <PanelSectionRow>
@@ -25,8 +39,8 @@ const QuickAccessPanel: VFC<{}> = () => {
                         <Field childrenLayout="inline" label="Checking connection...">
                             <Spinner />
                         </Field>
-                        <div style={{padding: '4px 0px'}}>
-                            Discord must be running for this plugin to connect. 
+                        <div style={{ padding: '4px 0px' }}>
+                            Discord must be running for this plugin to connect.
                         </div>
                     </Fragment>
                 )}
@@ -35,8 +49,8 @@ const QuickAccessPanel: VFC<{}> = () => {
                         <ButtonItem layout="below" onClick={onClick}>
                             Reconnect to Discord
                         </ButtonItem>
-                        <div style={{padding: '4px 0px'}}>
-                            Discord must be running for this plugin to connect. 
+                        <div style={{ padding: '4px 0px' }}>
+                            Discord must be running for this plugin to connect.
                         </div>
                     </Fragment>
                 )}
@@ -89,18 +103,21 @@ const QuickAccessPanel: VFC<{}> = () => {
                             <DropdownItem
                                 label="Set Reported App"
                                 description="Change the game or application that is reported to Discord."
-                                rgOptions={state.runningApps.map((app) => ({
-                                    label: <Fragment>{app.details.name}</Fragment>,
-                                    data: app
-                                }))}
+                                rgOptions={options}
                                 onChange={(option) => {
-                                    if (option) {
+                                    if (option && option.data) {
                                         dispatch(Actions.changeRunningApp(option.data));
+                                    } else if (option && !option.data) {
+                                        dispatch(Actions.changeRunningApp(null));
                                     }
                                 }}
-                                selectedOption={state.runningApps.find(
-                                    (a) => a.appId === state.currentApp?.appId
-                                )}
+                                selectedOption={
+                                    state.currentApp
+                                        ? state.runningApps.find(
+                                              (a) => a.appId === state.currentApp?.appId
+                                          )
+                                        : null
+                                }
                             />
                         </PanelSectionRow>
                     )}
