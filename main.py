@@ -67,6 +67,7 @@ class Plugin:
                 "pid": os.getpid(),
                 "activity": {
                     "state": "on Steam Deck",
+                    "name": activity["details"]["name"],
                     "details": "Playing {}".format(activity["details"]["name"]),
                     "assets": {
                         "large_image": activity["imageUrl"],
