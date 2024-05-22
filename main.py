@@ -1,19 +1,13 @@
 import asyncio
 import json
-import logging
 import os
 import socket
 import struct
 import uuid
 
-CLIENT_ID = "1055680235682672682"
+import decky_plugin
 
-logging.basicConfig(filename="/tmp/discord-status.log",
-                    format="[DiscordStatus] %(asctime)s %(levelname)s %(message)s",
-                    filemode="w+",
-                    force=True)
-logger=logging.getLogger()
-logger.setLevel(logging.INFO) # can be changed to logging.DEBUG for debugging issues
+CLIENT_ID = "1055680235682672682"
 
 OP_HANDSHAKE = 0
 OP_FRAME = 1
@@ -30,12 +24,12 @@ class EmptyReceiveException(Exception):
 
 class Plugin:
     async def debug(self, args):
-        logger.debug("Called with %s ", args)
+        decky_plugin.logger.debug("Called with %s ", args)
 
     async def clear_activity(self):
         global connected
         
-        logger.info("Clearing activity")
+        decky_plugin.logger.info("Clearing activity")
 
         if not connected:
             await self.connect(self)
@@ -49,16 +43,16 @@ class Plugin:
         }
 
         op, result = Plugin.send_recv(data)
-        logger.debug("result %s", result)
+        decky_plugin.logger.debug("result %s", result)
 
         return True
 
     async def update_activity(self, activity):
         global connected
 
-        logger.info("Updating activity: %s", activity["details"]["name"])
+        decky_plugin.logger.info("Updating activity: %s", activity["details"]["name"])
         if not connected:
-            logger.debug("Not connected, attempting to reconnect")
+            decky_plugin.logger.debug("Not connected, attempting to reconnect")
             await self.connect(self)
 
         data = {
@@ -81,7 +75,7 @@ class Plugin:
         }
 
         op, result = Plugin.send_recv(data)
-        logger.debug("result %s", result)
+        decky_plugin.logger.debug("result %s", result)
 
         return True
 
@@ -93,13 +87,13 @@ class Plugin:
             Plugin.send({}, op=OP_PING)
 
             if connected:
-                logger.debug("Already connected")
+                decky_plugin.logger.debug("Already connected")
                 return True
         
         if connecting:
             pass
 
-        logger.info("Attempting to reconnect")
+        decky_plugin.logger.info("Attempting to reconnect")
         await self.connect(self)
 
         return connected
@@ -110,7 +104,7 @@ class Plugin:
         global connected
         global client
 
-        logger.info("Starting Discord status plugin")
+        decky_plugin.logger.info("Starting Discord status plugin")
         connected = False
         connecting = False
 
@@ -121,10 +115,10 @@ class Plugin:
         global connecting
         connecting = False
         if connected:
-            logger.info("Closing connection")
+            decky_plugin.logger.info("Closing connection")
             self.disconnect(self)
         else:
-            logger.info("Wasn't connected")
+            decky_plugin.logger.info("Wasn't connected")
 
     async def connect(self):
         global client
@@ -138,14 +132,14 @@ class Plugin:
             tries = tries + 1
             socketPath = self._get_socket_path(self)
             if socketPath == None:
-                logger.debug("Socket file does not exist")
+                decky_plugin.logger.debug("Socket file does not exist")
                 await asyncio.sleep(2)
                 continue
             else:
-                logger.info("Socket file found at {}".format(socketPath))
+                decky_plugin.logger.info("Socket file found at {}".format(socketPath))
 
             client = socket.socket(socket.AF_UNIX)
-            logger.debug("Attempting to connect to socket")
+            decky_plugin.logger.debug("Attempting to connect to socket")
             try:
                 client.connect(socketPath)
                 await self._handshake(self)
@@ -162,12 +156,12 @@ class Plugin:
                 connected = False
                 await asyncio.sleep(5)
             except OSError as e:
-                logger.error("Socket not available: {}".format(e))
+                decky_plugin.logger.error("Socket not available: {}".format(e))
                 if (client):
                     client.close()
                 await asyncio.sleep(5)
             except BaseException as e:
-                logger.error("Some other error occurred: {}".format(e))
+                decky_plugin.logger.error("Some other error occurred: {}".format(e))
         connecting = False
 
     def disconnect(self):
@@ -182,10 +176,10 @@ class Plugin:
                 client.close()
         except BrokenPipeError as e:
             client = None
-            logger.warn("Pipe is broken, client closed unexpectedly")
+            decky_plugin.logger.warn("Pipe is broken, client closed unexpectedly")
 
         connected = False
-        logger.info("Socket closed")
+        decky_plugin.logger.info("Socket closed")
 
     def _get_socket_path(self):
         flatPakRoot = "/run/user/1000/app/com.discordapp.Discord"
@@ -210,11 +204,11 @@ class Plugin:
         ret_op, ret_data = Plugin.send_recv({"v": 1, "client_id": CLIENT_ID}, op=OP_HANDSHAKE)
         if ret_op == OP_FRAME and ret_data["cmd"] == "DISPATCH" and ret_data["evt"] == "READY":
             connected = True
-            logger.info("Connected")
+            decky_plugin.logger.info("Connected")
 
             return
         else:
-            logger.error("Handshake failed %s", ret_data)
+            decky_plugin.logger.error("Handshake failed %s", ret_data)
 
 
     def _recv_exactly(size) -> bytes:
@@ -225,7 +219,7 @@ class Plugin:
             chunk = Plugin._recv(size_remaining)
             buf += chunk
             if len(chunk) == 0:
-                logger.debug("empty receive")
+                decky_plugin.logger.debug("empty receive")
                 tries = tries + 1
             size_remaining -= len(chunk)
 
@@ -243,7 +237,7 @@ class Plugin:
         return Plugin.recv()
 
     def send(data, op=OP_FRAME):
-        logger.debug("sending %s", data)
+        decky_plugin.logger.debug("sending %s", data)
         data_str = json.dumps(data, separators=(",", ":"))
         data_bytes = data_str.encode("utf-8")
         header = struct.pack("<II", op, len(data_bytes))
@@ -254,7 +248,7 @@ class Plugin:
         op, length = Plugin._recv_header()
         payload = Plugin._recv_exactly(length)
         data = json.loads(payload.decode("utf-8"))
-        logger.debug("received %s", data)
+        decky_plugin.logger.debug("received %s", data)
         return op, data
 
     def _write(data: bytes):
@@ -267,7 +261,7 @@ class Plugin:
             else:
                 connected = False
         except BrokenPipeError as e:
-            logger.warn("Write failed, pipe is broken")
+            decky_plugin.logger.warn("Write failed, pipe is broken")
             client = None
             connected = False
             
@@ -281,6 +275,6 @@ class Plugin:
             else:
                 connected = False
         except BrokenPipeError as e:
-            logger.warn("Receive failed, pipe is broken")
+            decky_plugin.logger.warn("Receive failed, pipe is broken")
             client = None
             connected = False
