@@ -80,7 +80,7 @@ function enhancedDispatch(api: Api, dispatch: React.Dispatch<AcceptedActions>) {
             case ACTION_CONNECT:
                 dispatch(Actions.setConnectionStatus(ConnectionStatus.CONNECTING));
 
-                const status = await api.reconnect();
+                const status = await api.checkConnection();
 
                 dispatch(
                     Actions.setConnectionStatus(

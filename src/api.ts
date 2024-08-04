@@ -4,6 +4,7 @@ import { AppLifetimeNotification, AppOverview, AppType, Hook } from './SteamClie
 import { logger } from './util';
 
 const log = logger('API');
+const DISCORD_DETECTABLE_CACHE_KEY = 'discord-status:apps';
 
 enum StorageKeys {
     Activities = 'discord-status:activities',
@@ -16,9 +17,21 @@ export interface Activity {
     details: {
         name: string;
     };
+    discordId?: string;
     startTime: number;
     imageUrl: string;
     localImageUrl: string;
+}
+
+interface DiscordDetectableApplication {
+    executables: Array<{ name: string; os: 'darwin' | 'win32' | 'linux' }>;
+    id: string;
+    name: string;
+}
+
+interface CachedDiscordDetectableApplications {
+    lastFetch: number;
+    applications: DiscordDetectableApplication[];
 }
 
 export enum Event {
@@ -48,11 +61,19 @@ function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): A
         }
     }
 
+    let discordId: string | undefined = undefined;
+    const detectableCached = window.localStorage.getItem(DISCORD_DETECTABLE_CACHE_KEY);
+    if (detectableCached) {
+        const detectable = JSON.parse(detectableCached) as CachedDiscordDetectableApplications;
+        discordId = detectable.applications.find((app) => app.name === appInfo.display_name)?.id;
+    }
+
     return {
         appId: appInfo.appid.toString(),
         details: {
             name: appInfo.display_name
         },
+        discordId,
         startTime: startTime?.getTime() ?? Date.now(),
         imageUrl: image,
         localImageUrl: localImageUrl
@@ -120,11 +141,14 @@ export class Api extends EventEmitter {
         return Api.instance;
     }
 
-    public async reconnect(): Promise<boolean> {
-        log('Reconnecting');
+    public async checkConnection(): Promise<boolean> {
+        log('Checking connection');
         this.emit(Event.connecting);
 
-        const result = await this.serverApi.callPluginMethod<{}, boolean>('reconnect', {});
+        const [result] = await Promise.all([
+            this.serverApi.callPluginMethod<{}, boolean>('is_connected', {}),
+            this.loadDetectableDiscordApps()
+        ]);
 
         this._connected = result.success && result.result;
 
@@ -238,7 +262,7 @@ export class Api extends EventEmitter {
 
         if (app.bRunning) {
             if (isDiscord(gameInfo)) {
-                const connected = await this.reconnect();
+                const connected = await this.checkConnection();
                 if (connected && this.runningActivity) {
                     await this.updateActivity(this.runningActivity);
                 }
@@ -323,8 +347,6 @@ export class Api extends EventEmitter {
         });
 
         if (this.runningActivity) {
-            await this.reconnect();
-
             await this.updateActivity(this.runningActivity);
         }
 
@@ -357,6 +379,36 @@ export class Api extends EventEmitter {
 
         if (this._connected) {
             await this.disconnect();
+        }
+    }
+
+    protected async loadDetectableDiscordApps() {
+        const cached = window.localStorage.getItem(DISCORD_DETECTABLE_CACHE_KEY);
+
+        if (cached) {
+            const parsed = JSON.parse(cached) as CachedDiscordDetectableApplications;
+            if (Date.now() - parsed.lastFetch < 1000 * 60 * 60 * 24) {
+                log('Loaded cached detectable apps');
+                return parsed.applications;
+            }
+        }
+
+        try {
+            const response = await fetch('https://discord.com/api/v10/applications/detectable');
+            const data = (await response.json()) as DiscordDetectableApplication[];
+
+            const toCache = {
+                lastFetch: Date.now(),
+                applications: data
+            };
+
+            window.localStorage.setItem(DISCORD_DETECTABLE_CACHE_KEY, JSON.stringify(toCache));
+
+            log('Loaded detectable apps');
+            return data;
+        } catch (e) {
+            log('Failed to load detectable apps', e);
+            return [];
         }
     }
 }

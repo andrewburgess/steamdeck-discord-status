@@ -7,7 +7,7 @@ import QuickAccessPanel from './QuickAccessPanel';
 export default definePlugin((serverApi: ServerAPI) => {
     const api = Api.initialize(serverApi);
     // Attempt to reconnect on load
-    api.reconnect().catch(() => {});
+    api.checkConnection().catch(() => {});
 
     return {
         title: <div className={staticClasses.Title}>Discord Status</div>,
