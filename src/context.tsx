@@ -106,6 +106,20 @@ const Provider: React.FC<ProviderProps> = (props) => {
     const dispatch = enhancedDispatch(props.api, baseDispatch);
 
     useEffect(() => {
+        const cb = () => {
+            if (props.api.runningActivity) {
+                dispatch(Actions.setRunningApp(props.api.runningActivity));
+            }
+        };
+
+        window.addEventListener('online', cb);
+
+        return () => {
+            window.removeEventListener('online', cb);
+        };
+    }, [props.api]);
+
+    useEffect(() => {
         props.api
             .on(Event.connect, () =>
                 dispatch(Actions.setConnectionStatus(ConnectionStatus.CONNECTED))

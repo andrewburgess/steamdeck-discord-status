@@ -126,38 +126,43 @@ class Plugin:
         #    self.pipe.disconnect()
         #    self.pipe = None
 
-        discord_id = CLIENT_ID
-
-        if "discordId" in activity:
-            discord_id = activity["discordId"]
-
-        decky_plugin.logger.info("Updating activity: %s (%s)", activity["details"]["name"], discord_id)
-        self.pipe = Pipe(discord_id)
-
-        data = {
-            "cmd": "SET_ACTIVITY",
-            "args": {
-                "pid": os.getpid(),
-                "activity": {
-                    "state": "on Steam Deck",
-                    "details": "Playing {}".format(activity["details"]["name"]),
-                    "assets": {
-                        "large_image": activity["imageUrl"],
-                        "small_image": "steamdeck-icon"
+        try:
+            data = {
+                "cmd": "SET_ACTIVITY",
+                "args": {
+                    "pid": os.getpid(),
+                    "activity": {
+                        "state": "on Steam Deck",
+                        "assets": {
+                            "large_image": activity["imageUrl"],
+                            "small_image": "https://cdn.discordapp.com/app-assets/1055680235682672682/1056080943783354388.png"
+                        },
+                        "timestamps": {
+                            "start": activity["startTime"]
+                        }
                     },
-                    "timestamps": {
-                        "start": activity["startTime"]
-                    }
-                }
-            },
-            "nonce": str(uuid.uuid4())
-        }
+                },
+                "nonce": str(uuid.uuid4())
+            }
 
-        if self.pipe.connected:
-            self.pipe.handshake()
-            self.pipe._send(data)
-            return True
-        else:
+            discord_id = CLIENT_ID
+
+            if "discordId" in activity:
+                discord_id = activity["discordId"]
+            else:
+                data["args"]["activity"]["details"] = "Playing {}".format(activity["details"]["name"])
+
+            decky_plugin.logger.info("Updating activity: %s (%s)", activity["details"]["name"], discord_id)
+            self.pipe = Pipe(discord_id)
+
+            if self.pipe.connected:
+                self.pipe.handshake()
+                self.pipe._send(data)
+                return True
+            else:
+                return False
+        except Exception as e:
+            decky_plugin.logger.error(e)
             return False
         
     def check_connection(self):

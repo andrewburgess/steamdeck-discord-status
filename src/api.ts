@@ -49,9 +49,9 @@ function isDiscord(appInfo: AppOverview) {
 }
 
 function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): Activity {
-    const image =
+    let image =
         appInfo.app_type === AppType.Shortcut
-            ? 'steamdeck'
+            ? 'https://cdn.discordapp.com/app-assets/1055680235682672682/1057044202631987340.png'
             : appStore.GetVerticalCapsuleURLForApp(appInfo);
     let localImageUrl = image;
     if (appInfo.app_type === AppType.Shortcut) {
@@ -66,6 +66,10 @@ function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): A
     if (detectableCached) {
         const detectable = JSON.parse(detectableCached) as CachedDiscordDetectableApplications;
         discordId = detectable.applications.find((app) => app.name === appInfo.display_name)?.id;
+    }
+
+    if (!discordId && appInfo.app_type === AppType.Shortcut) {
+        image = 'steamdeck';
     }
 
     return {
