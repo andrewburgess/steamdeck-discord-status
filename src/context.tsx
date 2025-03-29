@@ -96,7 +96,7 @@ function enhancedDispatch(api: Api, dispatch: React.Dispatch<AcceptedActions>) {
     };
 }
 
-interface ProviderProps {
+interface ProviderProps extends React.PropsWithChildren {
     api: Api;
 }
 

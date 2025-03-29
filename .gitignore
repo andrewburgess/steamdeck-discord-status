@@ -50,3 +50,4 @@ backend/out
 out
 cli
 dist
+deck.json

@@ -176,7 +176,7 @@ class Plugin:
         tries = 0
 
         while not connected and tries < 5:
-            connected = self.check_connection(self)
+            connected = self.check_connection()
             tries += 1
             
             if not connected:
@@ -195,9 +195,9 @@ class Plugin:
     async def _main(self):
         decky_plugin.logger.info("Starting Discord status plugin")
 
-        await self.is_connected(self)
+        await self.is_connected()
 
     
     # Function called first during the unload process, utilize this to handle your plugin being removed
     async def _unload(self):
-        self.disconnect(self)
+        self.disconnect()

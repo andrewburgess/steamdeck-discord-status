@@ -1,4 +1,5 @@
-import { Router, ServerAPI } from 'decky-frontend-lib';
+import { Router } from '@decky/ui';
+import { callable, toaster } from '@decky/api';
 import { EventEmitter } from 'eventemitter3';
 import { AppLifetimeNotification, AppOverview, AppType, Hook } from './SteamClient';
 import { logger } from './util';
@@ -87,6 +88,11 @@ function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): A
 export class Api extends EventEmitter {
     private static instance: Api;
 
+    private _clearActivity = callable<[], boolean>('clear_activity');
+    private _disconnect = callable<[], boolean>('disconnect');
+    private _isConnected = callable<[], boolean>('is_connected');
+    private _updateActivity = callable<[Activity], boolean>('update_activity');
+
     private _activities: {
         [appId: string]: Activity;
     };
@@ -115,14 +121,12 @@ export class Api extends EventEmitter {
     }
 
     private hooks: Hook[];
-    private serverApi: ServerAPI;
 
-    private constructor(serverApi: ServerAPI) {
+    private constructor() {
         super();
 
         this._activities = {};
         this._runningActivity = null;
-        this.serverApi = serverApi;
         this.hooks = [];
 
         this.hooks.push(
@@ -139,8 +143,8 @@ export class Api extends EventEmitter {
         this.updateActivityState();
     }
 
-    public static initialize(serverApi: ServerAPI) {
-        Api.instance = new Api(serverApi);
+    public static initialize() {
+        Api.instance = new Api();
 
         return Api.instance;
     }
@@ -149,12 +153,9 @@ export class Api extends EventEmitter {
         log('Checking connection');
         this.emit(Event.connecting);
 
-        const [result] = await Promise.all([
-            this.serverApi.callPluginMethod<{}, boolean>('is_connected', {}),
-            this.loadDetectableDiscordApps()
-        ]);
+        const [result] = await Promise.all([this._isConnected(), this.loadDetectableDiscordApps()]);
 
-        this._connected = result.success && result.result;
+        this._connected = Boolean(result);
 
         if (this._connected) {
             log('Connected');
@@ -173,13 +174,13 @@ export class Api extends EventEmitter {
             await this.updateActivity(this.runningActivity);
         }
 
-        return result.success && result.result;
+        return this._connected;
     }
 
     public async disconnect(): Promise<void> {
         log('Disconnecting');
 
-        await this.serverApi.callPluginMethod<{}, boolean>('disconnect', {});
+        await this._disconnect();
 
         this._connected = false;
         this.emit(Event.disconnect);
@@ -200,11 +201,11 @@ export class Api extends EventEmitter {
         }
 
         log('Clearing activity', appId);
-        const result = await this.serverApi.callPluginMethod<{}, boolean>('clear_activity', {});
+        const result = await this._clearActivity();
 
         this.emit('update');
 
-        return result.success && result.result;
+        return result;
     }
 
     public async updateActivity(activity: Activity | null): Promise<boolean> {
@@ -220,14 +221,9 @@ export class Api extends EventEmitter {
         }
 
         log('Updating activity', activity);
-        const result = await this.serverApi.callPluginMethod<{ activity: Activity }, boolean>(
-            'update_activity',
-            {
-                activity
-            }
-        );
+        const result = await this._updateActivity(activity);
 
-        if (result.success && result.result) {
+        if (result) {
             this.emit('update');
             return true;
         }
@@ -280,7 +276,7 @@ export class Api extends EventEmitter {
                 await this.updateActivity(this._activities[gameId]);
 
                 if (this.connected && previousRunning && previousRunning.appId !== gameId) {
-                    this.serverApi.toaster.toast({
+                    toaster.toast({
                         title: 'Discord',
                         body: `Now playing ${this._activities[gameId].details.name}`
                     });
@@ -316,7 +312,7 @@ export class Api extends EventEmitter {
                     await this.updateActivity(this._activities[this._runningActivity]);
 
                     if (this.connected) {
-                        this.serverApi.toaster.toast({
+                        toaster.toast({
                             title: 'Discord',
                             body: `Now playing ${
                                 this._activities[this._runningActivity].details.name

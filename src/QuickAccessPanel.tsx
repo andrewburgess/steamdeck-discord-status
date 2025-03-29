@@ -1,16 +1,9 @@
-import { Fragment, VFC, useCallback, useContext, useMemo } from 'react';
+import { FC, Fragment, useCallback, useContext, useEffect, useMemo } from 'react';
+import { ButtonItem, DropdownItem, Field, PanelSection, PanelSectionRow, Spinner } from '@decky/ui';
 import { Actions, ConnectionStatus, Context } from './context';
-import {
-    ButtonItem,
-    DropdownItem,
-    Field,
-    PanelSection,
-    PanelSectionRow,
-    Spinner
-} from 'decky-frontend-lib';
 import { FaCheck } from 'react-icons/fa';
 
-const QuickAccessPanel: VFC<{}> = () => {
+const QuickAccessPanel: FC<{}> = () => {
     const [state, dispatch] = useContext(Context);
 
     const onClick = useCallback(async () => {

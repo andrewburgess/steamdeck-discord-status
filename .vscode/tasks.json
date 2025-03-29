@@ -8,9 +8,7 @@
             "type": "shell",
             "group": "none",
             "detail": "Install depedencies for basic setup",
-            "linux": {
-                "command": "${workspaceFolder}/.vscode/setup.sh"
-            },
+            "command": "${workspaceFolder}/.vscode/setup.sh",
             // // placeholder for windows scripts, not currently planned
             // "windows": {
             //     "command": "call -c ${workspaceFolder}\\.vscode\\setup.bat",
@@ -23,7 +21,7 @@
             "type": "shell",
             "group": "none",
             "detail": "Setup pnpm",
-            "command": "which pnpm && pnpm i",
+            "command": "which pnpm && pnpm -v && pnpm i",
             "problemMatcher": []
         },
         //Preliminary "All-in-one" setup task
@@ -40,9 +38,7 @@
             "type": "shell",
             "group": "none",
             "detail": "Check that settings.json has been created",
-            "linux": {
-                "command": "${workspaceFolder}/.vscode/config.sh"
-            },
+            "command": "${workspaceFolder}/.vscode/config.sh",
             // // placeholder for windows scripts, not currently planned
             // "windows": {
             //     "command": "call ${workspaceFolder}\\.vscode\\config.bat",
@@ -54,9 +50,7 @@
             "label": "cli-build",
             "group": "build",
             "detail": "Build plugin with CLI",
-            "linux": {
-                "command": "${workspaceFolder}/.vscode/build.sh"
-            },
+            "command": "${workspaceFolder}/.vscode/build.sh",
             // // placeholder for windows logic, not currently planned
             // "windows": {
             //     "command": "call ${workspaceFolder}\\.vscode\\build.bat",
@@ -89,7 +83,7 @@
             "detail": "",
             "type": "shell",
             "group": "none",
-            "command": "echo '${config:deckdir}/homebrew/plugins/${config:pluginname}.zip' && ssh ${config:deckuser}@${config:deckip} -p ${config:deckport} ${config:deckkey} 'echo ${config:deckpass} | sudo -S mkdir -p \"$(echo \"${config:deckdir}/homebrew/plugins/${config:pluginname}\" | sed \"s| |-|\")\" && echo ${config:deckpass} | sudo -S chown ${config:deckuser}:${config:deckuser} \"$(echo \"${config:deckdir}/homebrew/plugins/${config:pluginname}\" | sed \"s| |-|\")\" && echo ${config:deckpass} | sudo -S bsdtar -xzpf \"${config:deckdir}/homebrew/plugins/${config:pluginname}.zip\" -C \"$(echo \"${config:deckdir}/homebrew/plugins/${config:pluginname}\" | sed \"s| |-|\")\" --strip-components=1 --fflags ' && echo ${config:deckpass}",
+            "command": "echo '${config:deckdir}/homebrew/plugins/${config:pluginname}.zip' && ssh ${config:deckuser}@${config:deckip} -p ${config:deckport} ${config:deckkey} 'echo ${config:deckpass} | sudo -S mkdir 755 -p \"$(echo \"${config:deckdir}/homebrew/plugins/${config:pluginname}\" | sed \"s| |-|g\")\" && echo ${config:deckpass} | sudo -S chown ${config:deckuser}:${config:deckuser} \"$(echo \"${config:deckdir}/homebrew/plugins/${config:pluginname}\" | sed \"s| |-|g\")\" && echo ${config:deckpass} | sudo -S bsdtar -xzpf \"${config:deckdir}/homebrew/plugins/${config:pluginname}.zip\" -C \"$(echo \"${config:deckdir}/homebrew/plugins/${config:pluginname}\" | sed \"s| |-|g\")\" --strip-components=1 --fflags '",
             "problemMatcher": []
         },
         //"All-in-one" deploy task
@@ -115,8 +109,8 @@
             "label": "updatefrontendlib",
             "type": "shell",
             "group": "build",
-            "detail": "Update deck-frontend-lib aka DFL",
-            "command": "pnpm update decky-frontend-lib --latest",
+            "detail": "Update @decky/ui aka DFL",
+            "command": "pnpm update @decky/ui --latest",
             "problemMatcher": []
         },
         //Used chmod plugins folder to allow copy-over of files
