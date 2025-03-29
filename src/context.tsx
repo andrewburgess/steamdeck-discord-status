@@ -11,18 +11,22 @@ export enum ConnectionStatus {
 interface State {
     currentApp: Activity | null;
     connectionStatus: ConnectionStatus;
+    discordAppId: string | null;
     runningApps: Activity[];
 }
 
 const DEFAULT_STATE: State = {
     currentApp: null,
     connectionStatus: ConnectionStatus.DISCONNECTED,
+    discordAppId: null,
     runningApps: []
 };
 
 export const ACTION_CHANGE_RUNNING_APP = 'action:change-running-app';
 export const ACTION_CONNECT = 'action:connect';
+export const ACTION_LAUNCH_DISCORD = 'action:launch-discord';
 export const ACTION_SET_CONNECTION_STATUS = 'action:set-connection-status';
+export const ACTION_SET_DISCORD_APP_ID = 'action:set-discord-app-id';
 export const ACTION_SET_RUNNING_APP = 'action:set-running-app';
 export const ACTION_UPDATE_APPS = 'action:update-apps';
 
@@ -31,8 +35,12 @@ export const Actions = {
         ACTION_CHANGE_RUNNING_APP
     ),
     connect: createAction<typeof ACTION_CONNECT>(ACTION_CONNECT),
+    launchDiscord: createAction<typeof ACTION_LAUNCH_DISCORD>(ACTION_LAUNCH_DISCORD),
     setConnectionStatus: createActionPayload<typeof ACTION_SET_CONNECTION_STATUS, ConnectionStatus>(
         ACTION_SET_CONNECTION_STATUS
+    ),
+    setDiscordAppId: createActionPayload<typeof ACTION_SET_DISCORD_APP_ID, string>(
+        ACTION_SET_DISCORD_APP_ID
     ),
     setRunningApp: createActionPayload<typeof ACTION_SET_RUNNING_APP, Activity | null>(
         ACTION_SET_RUNNING_APP
@@ -55,6 +63,11 @@ function reducer(state: State, action: AcceptedActions): State {
             return {
                 ...state,
                 connectionStatus: action.payload
+            };
+        case ACTION_SET_DISCORD_APP_ID:
+            return {
+                ...state,
+                discordAppId: action.payload
             };
         case ACTION_SET_RUNNING_APP:
             return {
@@ -87,6 +100,12 @@ function enhancedDispatch(api: Api, dispatch: React.Dispatch<AcceptedActions>) {
                         status ? ConnectionStatus.CONNECTED : ConnectionStatus.DISCONNECTED
                     )
                 );
+
+                break;
+            case ACTION_LAUNCH_DISCORD:
+                dispatch(Actions.setConnectionStatus(ConnectionStatus.CONNECTING));
+
+                await api.launchDiscord();
 
                 break;
             default:
@@ -127,6 +146,7 @@ const Provider: React.FC<ProviderProps> = (props) => {
             .on(Event.disconnect, () =>
                 dispatch(Actions.setConnectionStatus(ConnectionStatus.DISCONNECTED))
             )
+            .on(Event.discordAppIdSet, (appId: string) => dispatch(Actions.setDiscordAppId(appId)))
             .on(Event.connecting, () =>
                 dispatch(Actions.setConnectionStatus(ConnectionStatus.CONNECTING))
             )

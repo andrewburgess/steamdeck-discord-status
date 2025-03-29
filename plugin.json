@@ -1,6 +1,7 @@
 {
     "name": "Discord Status",
     "author": "Deceptacle",
+    "api_version": 1,
     "flags": ["debug"],
     "publish": {
         "tags": ["discord"],

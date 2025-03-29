@@ -1,14 +1,15 @@
-import { Router } from '@decky/ui';
+import { AppDetails, Router, sleep } from '@decky/ui';
 import { callable, toaster } from '@decky/api';
 import { EventEmitter } from 'eventemitter3';
 import { AppLifetimeNotification, AppOverview, AppType, Hook } from './SteamClient';
 import { logger } from './util';
 
 const log = logger('API');
-const DISCORD_DETECTABLE_CACHE_KEY = 'discord-status:apps';
 
 enum StorageKeys {
     Activities = 'discord-status:activities',
+    DetectableCache = 'discord-status:apps',
+    DiscordShortcut = 'discord-status:shortcut',
     RunningActivity = 'discord-status:running-activity',
     SuspendTime = 'discord-status:suspend-time'
 }
@@ -38,15 +39,38 @@ interface CachedDiscordDetectableApplications {
 export enum Event {
     connect = 'connect',
     connecting = 'connecting',
+    discordAppIdSet = 'discord-shortcut-set',
     disconnect = 'disconnect',
     update = 'update'
 }
 
-function isDiscord(appInfo: AppOverview) {
-    return (
-        appInfo.app_type === AppType.Shortcut &&
-        appInfo.display_name.toLowerCase().includes('discord')
-    );
+async function isDiscord(appInfo: AppOverview) {
+    const flatpakCommand = 'com.discordapp.Discord';
+
+    return new Promise((resolve) => {
+        let timeoutId: NodeJS.Timeout | undefined;
+        try {
+            const { unregister } = SteamClient.Apps.RegisterForAppDetails(
+                appInfo.appid,
+                (appDetails: AppDetails) => {
+                    clearTimeout(timeoutId);
+
+                    const isDiscord = appDetails?.strLaunchOptions?.includes(flatpakCommand);
+                    unregister();
+                    resolve(isDiscord);
+                }
+            );
+
+            timeoutId = setTimeout(() => {
+                unregister();
+                resolve(false);
+            }, 3000);
+        } catch (e) {
+            log('Error checking if app is Discord', e);
+            clearTimeout(timeoutId);
+            resolve(false);
+        }
+    });
 }
 
 function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): Activity {
@@ -62,14 +86,16 @@ function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): A
         }
     }
 
-    let discordId: string | undefined = undefined;
-    const detectableCached = window.localStorage.getItem(DISCORD_DETECTABLE_CACHE_KEY);
+    let discordRemoteId: string | undefined = undefined;
+    const detectableCached = window.localStorage.getItem(StorageKeys.DetectableCache);
     if (detectableCached) {
         const detectable = JSON.parse(detectableCached) as CachedDiscordDetectableApplications;
-        discordId = detectable.applications.find((app) => app.name === appInfo.display_name)?.id;
+        discordRemoteId = detectable.applications.find(
+            (app) => app.name === appInfo.display_name
+        )?.id;
     }
 
-    if (!discordId && appInfo.app_type === AppType.Shortcut) {
+    if (!discordRemoteId && appInfo.app_type === AppType.Shortcut) {
         image = 'steamdeck';
     }
 
@@ -78,7 +104,7 @@ function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): A
         details: {
             name: appInfo.display_name
         },
-        discordId,
+        discordId: discordRemoteId,
         startTime: startTime?.getTime() ?? Date.now(),
         imageUrl: image,
         localImageUrl: localImageUrl
@@ -153,7 +179,11 @@ export class Api extends EventEmitter {
         log('Checking connection');
         this.emit(Event.connecting);
 
-        const [result] = await Promise.all([this._isConnected(), this.loadDetectableDiscordApps()]);
+        const [result] = await Promise.all([
+            this._isConnected(),
+            this.findDiscordAppId(),
+            this.loadDetectableDiscordApps()
+        ]);
 
         this._connected = Boolean(result);
 
@@ -169,7 +199,7 @@ export class Api extends EventEmitter {
             this.emit(Event.disconnect);
         }
 
-        this.updateActivityState();
+        await this.updateActivityState();
         if (this.runningActivity) {
             await this.updateActivity(this.runningActivity);
         }
@@ -232,23 +262,23 @@ export class Api extends EventEmitter {
         return false;
     }
 
-    public updateActivityState(): void {
-        Router.RunningApps.forEach((app) => {
+    public async updateActivityState(): Promise<void> {
+        for (const app of Router.RunningApps) {
             const appId = app.appid.toString();
             const gameInfo = appStore.GetAppOverviewByGameID(appId);
-            if (isDiscord(gameInfo)) {
+            if (await isDiscord(gameInfo)) {
                 return;
             }
 
             log('Initializing with activity', appId, gameInfo.display_name);
             this.activities[appId.toString()] = convertAppOverviewToActivity(gameInfo);
-        });
+        }
 
         if (Router.MainRunningApp && !this._runningActivity) {
             const gameInfo = appStore.GetAppOverviewByGameID(
                 Router.MainRunningApp.appid.toString()
             );
-            if (!isDiscord(gameInfo)) {
+            if (!(await isDiscord(gameInfo))) {
                 log('Setting running activity to', Router.MainRunningApp.appid.toString());
                 this._runningActivity = Router.MainRunningApp.appid.toString();
             }
@@ -261,7 +291,7 @@ export class Api extends EventEmitter {
         const gameInfo = appStore.GetAppOverviewByGameID(gameId);
 
         if (app.bRunning) {
-            if (isDiscord(gameInfo)) {
+            if (await isDiscord(gameInfo)) {
                 const connected = await this.checkConnection();
                 if (connected && this.runningActivity) {
                     await this.updateActivity(this.runningActivity);
@@ -283,7 +313,7 @@ export class Api extends EventEmitter {
                 }
             }
         } else {
-            if (isDiscord(gameInfo)) {
+            if (await isDiscord(gameInfo)) {
                 this._connected = false;
                 this.emit(Event.disconnect);
                 return;
@@ -382,8 +412,48 @@ export class Api extends EventEmitter {
         }
     }
 
+    protected async findDiscordAppId() {
+        const existingItem = window.localStorage.getItem(StorageKeys.DiscordShortcut);
+        if (existingItem) {
+            const appInfo = appStore.GetAppOverviewByGameID(existingItem);
+            if (await isDiscord(appInfo)) {
+                log('Found existing Discord shortcut', existingItem);
+                this.emit(Event.discordAppIdSet, existingItem);
+                return existingItem;
+            }
+        }
+
+        const { allApps } = appStore;
+        const shortcuts = allApps.filter((app) => app.app_type === AppType.Shortcut);
+
+        const possiblyDiscord = shortcuts.filter(
+            (app) => app.display_name.toLowerCase() === 'discord'
+        );
+
+        for (const app of possiblyDiscord) {
+            const gameInfo = appStore.GetAppOverviewByGameID(app.appid.toString());
+            if (await isDiscord(gameInfo)) {
+                window.localStorage.setItem(StorageKeys.DiscordShortcut, app.appid.toString());
+                this.emit(Event.discordAppIdSet, app.appid.toString());
+                return app.appid.toString();
+            }
+        }
+
+        for (const app of shortcuts) {
+            const gameInfo = appStore.GetAppOverviewByGameID(app.appid.toString());
+            if (await isDiscord(gameInfo)) {
+                window.localStorage.setItem(StorageKeys.DiscordShortcut, app.appid.toString());
+                this.emit(Event.discordAppIdSet, app.appid.toString());
+                return app.appid.toString();
+            }
+        }
+
+        log('No Discord app found');
+        return null;
+    }
+
     protected async loadDetectableDiscordApps() {
-        const cached = window.localStorage.getItem(DISCORD_DETECTABLE_CACHE_KEY);
+        const cached = window.localStorage.getItem(StorageKeys.DetectableCache);
 
         if (cached) {
             const parsed = JSON.parse(cached) as CachedDiscordDetectableApplications;
@@ -402,7 +472,7 @@ export class Api extends EventEmitter {
                 applications: data
             };
 
-            window.localStorage.setItem(DISCORD_DETECTABLE_CACHE_KEY, JSON.stringify(toCache));
+            window.localStorage.setItem(StorageKeys.DetectableCache, JSON.stringify(toCache));
 
             log('Loaded detectable apps');
             return data;
@@ -410,5 +480,27 @@ export class Api extends EventEmitter {
             log('Failed to load detectable apps', e);
             return [];
         }
+    }
+
+    public async launchDiscord() {
+        const discordAppId = await this.findDiscordAppId();
+
+        if (!discordAppId) {
+            toaster.toast({
+                title: 'Discord',
+                body: 'Could not find Discord shortcut. Make sure it is added to your library as a Non-Steam game.'
+            });
+
+            return;
+        }
+
+        log('Launching Discord');
+
+        const game = appStore.GetAppOverviewByAppID(parseInt(discordAppId));
+        const gameId = game.m_gameid;
+
+        await SteamClient.Apps.RunGame(gameId, '', -1, 100);
+
+        await sleep(3000);
     }
 }

@@ -49,7 +49,7 @@ export interface AppStore {
     GetAppOverviewByAppID: (id: number) => AppOverview;
     GetAppOverviewByGameID: (id: string) => AppOverview;
     CompareSortAs: any;
-    allApps: any;
+    allApps: AppOverview[];
     storeTagCounts: any;
     GetTopStoreTags: any;
     OnLocalizationChanged: any;

@@ -1,4 +1,4 @@
-import { FC, Fragment, useCallback, useContext, useEffect, useMemo } from 'react';
+import { FC, Fragment, useCallback, useContext, useMemo } from 'react';
 import { ButtonItem, DropdownItem, Field, PanelSection, PanelSectionRow, Spinner } from '@decky/ui';
 import { Actions, ConnectionStatus, Context } from './context';
 import { FaCheck } from 'react-icons/fa';
@@ -9,6 +9,10 @@ const QuickAccessPanel: FC<{}> = () => {
     const onClick = useCallback(async () => {
         dispatch(Actions.connect());
     }, [dispatch]);
+
+    const onLaunchDiscord = useCallback(async () => {
+        dispatch(Actions.launchDiscord());
+    }, []);
 
     const options = useMemo(
         () => [
@@ -37,10 +41,21 @@ const QuickAccessPanel: FC<{}> = () => {
                         </div>
                     </Fragment>
                 )}
-                {state.connectionStatus === ConnectionStatus.DISCONNECTED && (
+                {state.connectionStatus === ConnectionStatus.DISCONNECTED &&
+                    !state.discordAppId && (
+                        <Fragment>
+                            <ButtonItem layout="below" onClick={onClick}>
+                                Reconnect to Discord
+                            </ButtonItem>
+                            <div style={{ padding: '4px 0px' }}>
+                                Discord must be running for this plugin to connect.
+                            </div>
+                        </Fragment>
+                    )}
+                {state.connectionStatus === ConnectionStatus.DISCONNECTED && state.discordAppId && (
                     <Fragment>
-                        <ButtonItem layout="below" onClick={onClick}>
-                            Reconnect to Discord
+                        <ButtonItem layout="below" onClick={onLaunchDiscord}>
+                            Launch Discord
                         </ButtonItem>
                         <div style={{ padding: '4px 0px' }}>
                             Discord must be running for this plugin to connect.
