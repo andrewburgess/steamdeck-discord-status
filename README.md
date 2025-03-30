@@ -2,8 +2,8 @@
 
 Updates Discord Rich Presence with the currently running game while on Steam Deck.
 
-## Future Improvements
+## How to Use
 
--   Better detection of Discord being launched (currently depends on non-Steam application with name set to "Discord")
--   Current application switcher, to better handle having multiple applications running, and sending the correct one for
-    the "currently playing" status
+Discord must be running in order for this plugin to work. You should have Discord installed as a Flatpak
+and setup as a Non-Steam Game that can be launced from Steam. This will ensure the plugin can detect
+when Discord is running.
