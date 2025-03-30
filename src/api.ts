@@ -44,9 +44,9 @@ export enum Event {
     update = 'update'
 }
 
-async function isDiscord(appInfo: AppOverview) {
-    const flatpakCommand = 'com.discordapp.Discord';
+const DISCORD_SHORTCUT_COMMANDS = ['com.discordapp.Discord', 'dev.vencord.Vesktop'];
 
+async function isDiscord(appInfo: AppOverview) {
     return new Promise((resolve) => {
         let timeoutId: NodeJS.Timeout | undefined;
         try {
@@ -55,7 +55,11 @@ async function isDiscord(appInfo: AppOverview) {
                 (appDetails: AppDetails) => {
                     clearTimeout(timeoutId);
 
-                    const isDiscord = appDetails?.strLaunchOptions?.includes(flatpakCommand);
+                    const isDiscord = DISCORD_SHORTCUT_COMMANDS.some(
+                        (command) =>
+                            appDetails.strShortcutExe.includes(command) ||
+                            appDetails.strShortcutLaunchOptions.includes(command)
+                    );
                     unregister();
                     resolve(isDiscord);
                 }
@@ -179,13 +183,16 @@ export class Api extends EventEmitter {
         log('Checking connection');
         this.emit(Event.connecting);
 
-        const [result] = await Promise.all([
-            this._isConnected(),
+        const [discordAppId] = await Promise.all([
             this.findDiscordAppId(),
             this.loadDetectableDiscordApps()
         ]);
+        if (!discordAppId) {
+            log('No Discord app found');
+            return false;
+        }
 
-        this._connected = Boolean(result);
+        this._connected = await this._isConnected();
 
         if (this._connected) {
             log('Connected');
@@ -427,7 +434,10 @@ export class Api extends EventEmitter {
         const shortcuts = allApps.filter((app) => app.app_type === AppType.Shortcut);
 
         const possiblyDiscord = shortcuts.filter(
-            (app) => app.display_name.toLowerCase() === 'discord'
+            (app) =>
+                app.display_name.toLowerCase().includes('discord') ||
+                app.display_name.toLowerCase().includes('vesktop') ||
+                app.display_name.toLowerCase().includes('vencord')
         );
 
         for (const app of possiblyDiscord) {
