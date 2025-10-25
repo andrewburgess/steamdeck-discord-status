@@ -175,13 +175,15 @@ class Plugin:
         connected = False
         tries = 0
 
-        while not connected and tries < 5:
+        while not connected and tries < 2:
             connected = self.check_connection()
             tries += 1
             
             if not connected:
                 decky.logger.warning("No IPC file, retrying in 5 seconds")
-                await asyncio.sleep(5)
+                await asyncio.sleep(1)
+            else:
+                decky.logger.info("Found IPC file")
 
         return connected
         

@@ -1,8 +1,11 @@
-import { AppDetails, Router, sleep } from '@decky/ui';
+import { Router, sleep } from '@decky/ui';
 import { callable, toaster } from '@decky/api';
 import { EventEmitter } from 'eventemitter3';
-import { AppLifetimeNotification, AppOverview, AppType, Hook } from './SteamClient';
 import { logger } from './util';
+import { AppDetails } from '@decky/ui/dist/globals/steam-client/App';
+import { AppOverview, AppType, Hook } from './SteamClient';
+import { AppLifetimeNotification } from '@decky/ui/dist/globals/steam-client/GameSessions';
+import { ESuspendResumeProgressState, SuspendProgress } from '@decky/ui/dist/globals/steam-client/User';
 
 const log = logger('API');
 
@@ -55,13 +58,13 @@ async function isDiscord(appInfo: AppOverview) {
                 (appDetails: AppDetails) => {
                     clearTimeout(timeoutId);
 
-                    const isDiscord = DISCORD_SHORTCUT_COMMANDS.some(
+                    const isDiscordCommand = DISCORD_SHORTCUT_COMMANDS.some(
                         (command) =>
-                            appDetails.strShortcutExe.includes(command) ||
-                            appDetails.strShortcutLaunchOptions.includes(command)
+                            appDetails.strShortcutExe?.includes(command) ||
+                            appDetails.strShortcutLaunchOptions?.includes(command)
                     );
                     unregister();
-                    resolve(isDiscord);
+                    resolve(isDiscordCommand);
                 }
             );
 
@@ -166,9 +169,9 @@ export class Api extends EventEmitter {
         );
 
         this.hooks.push(
-            SteamClient.System.RegisterForOnResumeFromSuspend(this.onResume.bind(this))
+            SteamClient.User.RegisterForResumeSuspendedGamesProgress(this.onResume.bind(this))
         );
-        this.hooks.push(SteamClient.System.RegisterForOnSuspendRequest(this.onSuspend.bind(this)));
+        this.hooks.push(SteamClient.User.RegisterForPrepareForSystemSuspendProgress(this.onSuspend.bind(this)));
 
         this.updateActivityState();
     }
@@ -361,7 +364,14 @@ export class Api extends EventEmitter {
         }
     }
 
-    protected async onResume() {
+    protected async onResume(progress: SuspendProgress) {
+        if (progress.state !== ESuspendResumeProgressState.Complete) {
+            return;
+        }
+
+        await sleep(2000);
+        await this.checkConnection();
+
         const suspendTimeValue = localStorage.getItem(StorageKeys.SuspendTime);
         let suspendTime = 0;
         if (suspendTimeValue) {
@@ -398,7 +408,11 @@ export class Api extends EventEmitter {
         localStorage.removeItem(StorageKeys.RunningActivity);
     }
 
-    protected async onSuspend() {
+    protected async onSuspend(progress: SuspendProgress) {
+        if (progress.state !== ESuspendResumeProgressState.Working) {
+            return;
+        }
+
         localStorage.setItem(StorageKeys.SuspendTime, Date.now().toString());
         localStorage.setItem(StorageKeys.Activities, JSON.stringify(this.activities));
 
