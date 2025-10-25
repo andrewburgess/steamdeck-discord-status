@@ -1,6 +1,6 @@
 {
     "name": "steamdeck-discord-status",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "description": "Decky plugin to update Discord's Rich Presence status with whatever you are currently playing",
     "type": "module",
     "scripts": {
