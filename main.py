@@ -5,7 +5,7 @@ import socket
 import struct
 import uuid
 
-import decky_plugin
+import decky
 
 CLIENT_ID = "1055680235682672682"
 
@@ -37,7 +37,7 @@ class Pipe:
         return None
 
     def __init__(self, app_id):
-        decky_plugin.logger.info("Initializing pipe")
+        decky.logger.info("Initializing pipe")
         self.app_id = app_id
         self.socket = socket.socket(socket.AF_UNIX)
         self.connected = True
@@ -47,10 +47,10 @@ class Pipe:
             self.connected = False
         else:
             self.socket.connect(file_path)
-            decky_plugin.logger.debug("Connected to %s", file_path)
+            decky.logger.debug("Connected to %s", file_path)
 
     def disconnect(self):
-        decky_plugin.logger.info("Disconnecting")
+        decky.logger.info("Disconnecting")
         self._send({}, OP_CLOSE)
 
         self.socket.shutdown(socket.SHUT_RDWR)
@@ -59,22 +59,22 @@ class Pipe:
         self.connected = False
 
     def handshake(self):
-        decky_plugin.logger.info("Beginning handshake for app %s", self.app_id)
+        decky.logger.info("Beginning handshake for app %s", self.app_id)
         self._send({'v': 1, 'client_id': self.app_id}, op=OP_HANDSHAKE)
         data = self._recv()
 
         try:
             if data['cmd'] == 'DISPATCH' and data['evt'] == 'READY':
-                decky_plugin.logger.info("Connected")
+                decky.logger.info("Connected")
                 return True
             
             else:
-                decky_plugin.logger.error("Handshake failed %s", data)
+                decky.logger.error("Handshake failed %s", data)
                 raise HandshakeException()
 
         except KeyError:
             if data['code'] == 4000:
-                decky_plugin.logger.error("Handshake failed %s", data)
+                decky.logger.error("Handshake failed %s", data)
                 raise HandshakeException()
 
     def _recv(self):
@@ -85,11 +85,11 @@ class Pipe:
 
         output = json.loads(enc_data.decode('UTF-8'))
         
-        decky_plugin.logger.info(output)
+        decky.logger.info(output)
         return output
     
     def _send(self, payload, op=OP_FRAME):
-        decky_plugin.logger.info(payload)
+        decky.logger.info(payload)
 
         payload = json.dumps(payload).encode('UTF-8')
         payload = struct.pack('<ii', op, len(payload)) + payload
@@ -98,13 +98,13 @@ class Pipe:
 
 class Plugin:
     async def debug(self, args):
-        decky_plugin.logger.debug("Called with %s ", args)
+        decky.logger.debug("Called with %s ", args)
 
     async def clear_activity(self):
         if self.pipe is None:
             return False
         
-        decky_plugin.logger.info("Clearing activity")
+        decky.logger.info("Clearing activity")
 
         data = {
             "cmd": "SET_ACTIVITY",
@@ -152,7 +152,7 @@ class Plugin:
             else:
                 data["args"]["activity"]["details"] = "Playing {}".format(activity["details"]["name"])
 
-            decky_plugin.logger.info("Updating activity: %s (%s)", activity["details"]["name"], discord_id)
+            decky.logger.info("Updating activity: %s (%s)", activity["details"]["name"], discord_id)
             self.pipe = Pipe(discord_id)
 
             if self.pipe.connected:
@@ -162,7 +162,7 @@ class Plugin:
             else:
                 return False
         except Exception as e:
-            decky_plugin.logger.error(e)
+            decky.logger.error(e)
             return False
         
     def check_connection(self):
@@ -171,7 +171,7 @@ class Plugin:
         return pipe_file is not None
 
     async def is_connected(self):
-        decky_plugin.logger.info("Checking connection status")
+        decky.logger.info("Checking connection status")
         connected = False
         tries = 0
 
@@ -180,20 +180,20 @@ class Plugin:
             tries += 1
             
             if not connected:
-                decky_plugin.logger.warning("No IPC file, retrying in 5 seconds")
+                decky.logger.warning("No IPC file, retrying in 5 seconds")
                 await asyncio.sleep(5)
 
         return connected
         
     async def disconnect(self):
         if self.pipe is not None and self.pipe.connected:
-            decky_plugin.logger.info("Closing connection")
+            decky.logger.info("Closing connection")
             self.pipe.disconnect()
             self.pipe = None
 
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
-        decky_plugin.logger.info("Starting Discord status plugin")
+        decky.logger.info("Starting Discord status plugin")
 
         await self.is_connected()
 
