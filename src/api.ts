@@ -51,7 +51,7 @@ const DISCORD_SHORTCUT_COMMANDS = ['com.discordapp.Discord', 'dev.vencord.Veskto
 
 async function isDiscord(appInfo: AppOverview) {
     return new Promise((resolve) => {
-        let timeoutId: NodeJS.Timeout | undefined;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
         try {
             const { unregister } = SteamClient.Apps.RegisterForAppDetails(
                 appInfo.appid,

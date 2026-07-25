@@ -7,7 +7,7 @@
         "jsxFactory": "window.SP_REACT.createElement",
         "jsxFragmentFactory": "window.SP_REACT.Fragment",
         "declaration": false,
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "noUnusedLocals": true,
         "noUnusedParameters": true,
         "esModuleInterop": true,
