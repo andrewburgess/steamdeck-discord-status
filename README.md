@@ -23,8 +23,18 @@ pnpm deck:watch    # same, on every change to src/ or main.py
 pnpm zip           # build out/<plugin>.zip for a manual install, no deploy
 ```
 
-`pnpm deck` accepts `--no-build` (redeploy the current `dist/`), `--no-restart` (leave
-`plugin_loader` alone) and `--zip`.
+`pnpm deck` accepts `--no-build` (redeploy the current `dist/`), `--no-restart` (leave the running
+plugin alone), `--full-restart` and `--zip`.
+
+By default a deploy reloads *just this plugin* through decky rather than restarting
+`plugin_loader`, which would tear down the quick access menu and close whatever panel you have
+open. That path talks to Steam's CEF debugging port (8081, override with `cefPort` in `deck.json`)
+and needs decky's developer mode switched on. If it is unavailable the script says so and falls
+back to a full restart on its own; `--full-restart` forces one.
+
+Backend changes apply the moment the reload finishes. A panel that is already on screen keeps
+rendering the React tree it mounted from the previous bundle, so back out of it and reopen to pick
+up frontend changes — still far quicker than a restart, which closes the menu entirely.
 
 > Use `pnpm deck`, not `pnpm deploy` — `deploy` is a built-in pnpm command and would not run
 > the script.

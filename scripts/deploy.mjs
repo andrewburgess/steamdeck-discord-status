@@ -12,7 +12,8 @@
  * the deck is identical to a store install.
  *
  * Usage:
- *   node scripts/deploy.mjs [--watch] [--zip] [--no-build] [--no-deploy] [--no-restart]
+ *   node scripts/deploy.mjs [--watch] [--zip] [--no-build] [--no-deploy]
+ *                           [--no-restart] [--full-restart]
  */
 
 import { spawn } from 'node:child_process';
@@ -32,7 +33,14 @@ const REQUIRED_FILES = ['main.py', 'plugin.json', 'package.json'];
 /** Directories copied into the plugin folder. `defaults` is flattened into the root. */
 const PLUGIN_DIRS = ['dist', 'bin', 'py_modules'];
 
-const KNOWN_FLAGS = ['--watch', '--zip', '--no-build', '--no-deploy', '--no-restart'];
+const KNOWN_FLAGS = [
+    '--watch',
+    '--zip',
+    '--no-build',
+    '--no-deploy',
+    '--no-restart',
+    '--full-restart'
+];
 
 // --------------------------------------------------------------------------
 // args
@@ -44,7 +52,8 @@ const flags = {
     zip: args.includes('--zip'),
     build: !args.includes('--no-build'),
     deploy: !args.includes('--no-deploy'),
-    restart: !args.includes('--no-restart')
+    restart: !args.includes('--no-restart'),
+    fullRestart: args.includes('--full-restart')
 };
 
 // --------------------------------------------------------------------------
@@ -168,6 +177,9 @@ async function readConfig() {
         port: String(raw.port ?? raw.deckport ?? 22),
         password: raw.password ?? raw.deckpass,
         deckDir: (raw.deckDir ?? raw.deckdir ?? '/home/deck').replace(/\/+$/, ''),
+        // Steam's CEF debugging port, used to reload just this plugin instead
+        // of restarting the whole loader. Requires decky's developer mode.
+        cefPort: String(raw.cefPort ?? 8081),
         identityFile: identity
             ? path.resolve(identity.replace(/^~|^\$HOME|^\$\{env:HOME\}/, os.homedir()))
             : undefined
@@ -214,9 +226,18 @@ async function build() {
         env: flags.deploy ? { DECKY_DEV_BUILD: '1' } : undefined
     });
 
-    const bundle = await fs.readFile(path.join(ROOT, 'dist', 'index.js'), 'utf8');
-    const hash = bundle.match(/const BUILD_HASH = ["']([^"']+)["']/)?.[1];
+    const hash = await currentBuildHash();
     if (hash) log(`build hash ${hash} -- the panel should show this once deployed`);
+}
+
+/** The hash baked into the built bundle, or null for a release build. */
+async function currentBuildHash() {
+    try {
+        const bundle = await fs.readFile(path.join(ROOT, 'dist', 'index.js'), 'utf8');
+        return bundle.match(/const BUILD_HASH = ["']([^"']+)["']/)?.[1] ?? null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -295,6 +316,100 @@ async function makeZip(folderName) {
 }
 
 // --------------------------------------------------------------------------
+// hot reload
+// --------------------------------------------------------------------------
+
+/**
+ * Evaluates an expression in Steam's SharedJSContext over the CEF debugging
+ * protocol, which is where decky loads plugin frontends.
+ */
+async function evaluateInSteam(config, expression) {
+    const response = await fetch(`http://${config.host}:${config.cefPort}/json/list`, {
+        signal: AbortSignal.timeout(3000)
+    });
+
+    const target = (await response.json()).find((t) => t.title === 'SharedJSContext');
+    if (!target) throw new Error('SharedJSContext not found');
+
+    const socket = new WebSocket(target.webSocketDebuggerUrl);
+
+    try {
+        return await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('CEF evaluate timed out')), 15000);
+
+            socket.addEventListener('open', () => {
+                socket.send(
+                    JSON.stringify({
+                        id: 1,
+                        method: 'Runtime.evaluate',
+                        params: { expression, awaitPromise: true, returnByValue: true }
+                    })
+                );
+            });
+
+            socket.addEventListener('message', (event) => {
+                const message = JSON.parse(event.data);
+                if (message.id !== 1) return;
+
+                clearTimeout(timeout);
+
+                if (message.result?.exceptionDetails) {
+                    const detail = message.result.exceptionDetails.exception?.description;
+                    reject(new Error(detail ?? 'CEF evaluate threw'));
+                    return;
+                }
+
+                resolve(message.result.result.value);
+            });
+
+            socket.addEventListener('error', () => {
+                clearTimeout(timeout);
+                reject(new Error('CEF websocket error'));
+            });
+        });
+    } finally {
+        socket.close();
+    }
+}
+
+/**
+ * Reloads just this plugin via decky, which re-imports both the backend and the
+ * frontend bundle. Much less disruptive than restarting plugin_loader, which
+ * tears down the whole quick access menu and closes whatever panel is open.
+ *
+ * Note that a panel already on screen keeps rendering the React tree it mounted
+ * from the previous bundle -- back out of it and reopen to pick up UI changes.
+ * Backend changes apply immediately.
+ *
+ * Returns true if the reload happened, false to fall back to a full restart.
+ */
+async function reloadPlugin(config, pluginName) {
+    const call = `window.DeckyBackend.call("loader/reload_plugin", ${JSON.stringify(pluginName)})`;
+
+    try {
+        await evaluateInSteam(config, `${call}.then(() => true)`);
+    } catch (error) {
+        log(`plugin reload unavailable (${error.message}), falling back to a full restart`);
+        return false;
+    }
+
+    // Dev builds stamp the hash onto window, so we can prove the deck really
+    // picked up this bundle rather than silently keeping the old one.
+    const expected = await currentBuildHash();
+    if (expected) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+        const live = await evaluateInSteam(config, 'window.__DISCORD_STATUS_BUILD').catch(() => null);
+        if (live !== expected) {
+            log(`reloaded bundle is ${live ?? 'unknown'}, expected ${expected} -- restarting instead`);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
 // deploy
 // --------------------------------------------------------------------------
 
@@ -338,17 +453,34 @@ async function deploy(config, folderName, pluginName) {
         // `=` not `+`: tarballs built on Windows carry NTFS-derived 0777/0666
         // modes, so adding bits would leave root-owned files world-writable.
         `chmod -R u=rwX,go=rX ${quotedTarget}`,
-        `if [ -d ${quotedBin} ]; then chmod -R a+x ${quotedBin}; fi`,
-        ...(flags.restart ? ['systemctl restart plugin_loader'] : [])
+        `if [ -d ${quotedBin} ]; then chmod -R a+x ${quotedBin}; fi`
     ].join('\n');
 
-    log(flags.restart ? 'installing and restarting decky' : 'installing');
+    log('installing');
+    await sudoRun(config, script);
 
-    const password =
+    if (!flags.restart) return;
+
+    // Reloading just this plugin leaves the quick access menu alone; a full
+    // restart tears it down and closes whatever panel is open.
+    if (!flags.fullRestart && (await reloadPlugin(config, pluginName))) {
+        log('reloaded plugin -- reopen the panel to see frontend changes');
+        return;
+    }
+
+    log('restarting decky');
+    await sudoRun(config, 'systemctl restart plugin_loader');
+}
+
+let cachedPassword;
+
+/** Runs a script as root on the deck, feeding sudo the password on stdin. */
+async function sudoRun(config, script) {
+    cachedPassword ??=
         config.password ?? (await promptPassword(`sudo password for ${config.user}@${config.host}: `));
 
     await run('ssh', sshArgs(config, `sudo -S -p '' sh -c "${script}"`), {
-        stdin: `${password}\n`
+        stdin: `${cachedPassword}\n`
     });
 }
 

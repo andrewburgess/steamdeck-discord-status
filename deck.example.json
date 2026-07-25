@@ -4,5 +4,6 @@
     "port": 22,
     "identityFile": "~/.ssh/id_rsa",
     "password": "your deck sudo password",
-    "deckDir": "/home/deck"
+    "deckDir": "/home/deck",
+    "cefPort": 8081
 }
