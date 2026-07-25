@@ -43,7 +43,7 @@ const QuickAccessPanel: FC<{}> = () => {
                     </Fragment>
                 )}
                 {state.connectionStatus === ConnectionStatus.DISCONNECTED &&
-                    !state.discordAppId && (
+                    !state.discordShortcutAppId && (
                         <Fragment>
                             <ButtonItem layout="below" onClick={onClick}>
                                 Reconnect to Discord
@@ -53,7 +53,7 @@ const QuickAccessPanel: FC<{}> = () => {
                             </div>
                         </Fragment>
                     )}
-                {state.connectionStatus === ConnectionStatus.DISCONNECTED && state.discordAppId && (
+                {state.connectionStatus === ConnectionStatus.DISCONNECTED && state.discordShortcutAppId && (
                     <Fragment>
                         <ButtonItem layout="below" onClick={onLaunchDiscord}>
                             Launch Discord

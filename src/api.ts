@@ -42,7 +42,12 @@ interface CachedDiscordDetectableApplications {
 export enum Event {
     connect = 'connect',
     connecting = 'connecting',
-    discordAppIdSet = 'discord-shortcut-set',
+    /**
+     * We located Discord itself in the Steam library. Carries the *Steam* app id
+     * of the non-Steam shortcut, which is what we launch. Nothing to do with
+     * Discord's own application ids.
+     */
+    discordShortcutFound = 'discord-shortcut-set',
     disconnect = 'disconnect',
     update = 'update'
 }
@@ -186,11 +191,11 @@ export class Api extends EventEmitter {
         log('Checking connection');
         this.emit(Event.connecting);
 
-        const [discordAppId] = await Promise.all([
-            this.findDiscordAppId(),
+        const [discordShortcutAppId] = await Promise.all([
+            this.findDiscordShortcutAppId(),
             this.loadDetectableDiscordApps()
         ]);
-        if (!discordAppId) {
+        if (!discordShortcutAppId) {
             log('No Discord app found');
             return false;
         }
@@ -433,13 +438,14 @@ export class Api extends EventEmitter {
         }
     }
 
-    protected async findDiscordAppId() {
+    /** Finds the Steam app id of the Discord shortcut in the user's library. */
+    protected async findDiscordShortcutAppId() {
         const existingItem = window.localStorage.getItem(StorageKeys.DiscordShortcut);
         if (existingItem) {
             const appInfo = appStore.GetAppOverviewByGameID(existingItem);
             if (await isDiscord(appInfo)) {
                 log('Found existing Discord shortcut', existingItem);
-                this.emit(Event.discordAppIdSet, existingItem);
+                this.emit(Event.discordShortcutFound, existingItem);
                 return existingItem;
             }
         }
@@ -458,7 +464,7 @@ export class Api extends EventEmitter {
             const gameInfo = appStore.GetAppOverviewByGameID(app.appid.toString());
             if (await isDiscord(gameInfo)) {
                 window.localStorage.setItem(StorageKeys.DiscordShortcut, app.appid.toString());
-                this.emit(Event.discordAppIdSet, app.appid.toString());
+                this.emit(Event.discordShortcutFound, app.appid.toString());
                 return app.appid.toString();
             }
         }
@@ -467,7 +473,7 @@ export class Api extends EventEmitter {
             const gameInfo = appStore.GetAppOverviewByGameID(app.appid.toString());
             if (await isDiscord(gameInfo)) {
                 window.localStorage.setItem(StorageKeys.DiscordShortcut, app.appid.toString());
-                this.emit(Event.discordAppIdSet, app.appid.toString());
+                this.emit(Event.discordShortcutFound, app.appid.toString());
                 return app.appid.toString();
             }
         }
@@ -507,9 +513,9 @@ export class Api extends EventEmitter {
     }
 
     public async launchDiscord() {
-        const discordAppId = await this.findDiscordAppId();
+        const discordShortcutAppId = await this.findDiscordShortcutAppId();
 
-        if (!discordAppId) {
+        if (!discordShortcutAppId) {
             toaster.toast({
                 title: 'Discord',
                 body: 'Could not find Discord shortcut. Make sure it is added to your library as a Non-Steam game.'
@@ -520,7 +526,7 @@ export class Api extends EventEmitter {
 
         log('Launching Discord');
 
-        const game = appStore.GetAppOverviewByAppID(parseInt(discordAppId));
+        const game = appStore.GetAppOverviewByAppID(parseInt(discordShortcutAppId));
         const gameId = game.m_gameid;
 
         await SteamClient.Apps.RunGame(gameId, '', -1, 100);
