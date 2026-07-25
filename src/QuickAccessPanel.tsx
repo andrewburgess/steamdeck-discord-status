@@ -1,7 +1,16 @@
-import { FC, Fragment, useCallback, useContext, useMemo } from 'react';
-import { ButtonItem, DropdownItem, Field, PanelSection, PanelSectionRow, Spinner } from '@decky/ui';
+import { FC, Fragment, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+    ButtonItem,
+    DropdownItem,
+    Field,
+    PanelSection,
+    PanelSectionRow,
+    Spinner,
+    TextField
+} from '@decky/ui';
 import { BUILD_HASH, VERSION } from 'virtual:build-info';
 import { Actions, ConnectionStatus, Context } from './context';
+import { DEFAULT_DEVICE_NAME } from './api';
 import { FaCheck } from 'react-icons/fa';
 
 const QuickAccessPanel: FC<{}> = () => {
@@ -14,6 +23,24 @@ const QuickAccessPanel: FC<{}> = () => {
     const onLaunchDiscord = useCallback(async () => {
         dispatch(Actions.launchDiscord());
     }, []);
+
+    // Held locally while typing so we save once the field is done with, rather
+    // than pushing a new presence to Discord on every keystroke. The draft
+    // follows settingsRevision so it snaps back to the stored value after a
+    // save, including one the backend normalised.
+    const [deviceNameDraft, setDeviceNameDraft] = useState(state.deviceName);
+
+    useEffect(() => {
+        setDeviceNameDraft(state.deviceName);
+    }, [state.deviceName, state.settingsRevision]);
+
+    const onDeviceNameCommit = useCallback(() => {
+        if (deviceNameDraft.trim() === state.deviceName) {
+            return;
+        }
+
+        dispatch(Actions.changeDeviceName(deviceNameDraft));
+    }, [deviceNameDraft, dispatch, state.deviceName]);
 
     const options = useMemo(
         () => [
@@ -112,6 +139,7 @@ const QuickAccessPanel: FC<{}> = () => {
                             <DropdownItem
                                 label="Set Reported App"
                                 description="Change the game or application that is reported to Discord."
+                                layout="below"
                                 rgOptions={options}
                                 onChange={(option) => {
                                     if (option && option.data) {
@@ -133,11 +161,34 @@ const QuickAccessPanel: FC<{}> = () => {
                 </Fragment>
             )}
             <PanelSectionRow>
-                <Field bottomSeparator="none" focusable={false} padding="compact">
+                <div style={{ padding: '12px 0px 8px' }}>
+                    <TextField
+                        label="Device Name"
+                        description={`Shown in Discord as "on ${
+                            state.deviceName || DEFAULT_DEVICE_NAME
+                        }". Leave blank to use "${DEFAULT_DEVICE_NAME}".`}
+                        value={deviceNameDraft}
+                        onChange={(e) => setDeviceNameDraft(e.target.value)}
+                        onBlur={onDeviceNameCommit}
+                        bShowClearAction={true}
+                    />
+                </div>
+            </PanelSectionRow>
+            <PanelSectionRow>
+                <Field
+                    bottomSeparator="none"
+                    focusable={false}
+                    padding="none"
+                    // Without this the children container is sized to its
+                    // content and pinned right, so width/padding do nothing.
+                    childrenContainerWidth="max"
+                >
                     <div
                         style={{
+                            boxSizing: 'border-box',
                             color: '#8b929a',
                             fontSize: '0.7em',
+                            padding: '10px 16px 6px',
                             textAlign: 'center',
                             width: '100%'
                         }}

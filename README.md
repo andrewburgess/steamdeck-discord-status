@@ -8,6 +8,14 @@ Discord must be running in order for this plugin to work. You should have Discor
 and setup as a Non-Steam Game that can be launced from Steam. This will ensure the plugin can detect
 when Discord is running.
 
+### Device Name
+
+Your presence reads `on Steam Deck` by default. SteamOS runs on plenty of other hardware now, so
+the quick access panel has a **Device Name** field — set it to `ROG Ally`, `Steam Machine`, or
+whatever you are actually playing on, and the presence follows. Clearing the field puts it back to
+`Steam Deck`. The name is saved on the deck and applies immediately to whatever is currently
+running.
+
 ## Development
 
 Requires Node (see `mise.toml`) and pnpm. No Docker, no `decky` CLI, no WSL — the deploy script

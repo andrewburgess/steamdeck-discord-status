@@ -42,6 +42,7 @@ interface CachedDiscordDetectableApplications {
 export enum Event {
     connect = 'connect',
     connecting = 'connecting',
+    deviceNameSet = 'device-name-set',
     /**
      * We located Discord itself in the Steam library. Carries the *Steam* app id
      * of the non-Steam shortcut, which is what we launch. Nothing to do with
@@ -51,6 +52,9 @@ export enum Event {
     disconnect = 'disconnect',
     update = 'update'
 }
+
+/** Kept in sync with DEFAULT_DEVICE_NAME in main.py. */
+export const DEFAULT_DEVICE_NAME = 'Steam Deck';
 
 const DISCORD_SHORTCUT_COMMANDS = ['com.discordapp.Discord', 'dev.vencord.Vesktop'];
 
@@ -128,7 +132,9 @@ export class Api extends EventEmitter {
 
     private _clearActivity = callable<[], boolean>('clear_activity');
     private _disconnect = callable<[], boolean>('disconnect');
+    private _getDeviceName = callable<[], string>('get_device_name');
     private _isConnected = callable<[], boolean>('is_connected');
+    private _setDeviceName = callable<[string], string>('set_device_name');
     private _updateActivity = callable<[Activity], boolean>('update_activity');
 
     private _activities: {
@@ -136,6 +142,12 @@ export class Api extends EventEmitter {
     };
     public get activities() {
         return this._activities;
+    }
+
+    private _deviceName: string = DEFAULT_DEVICE_NAME;
+    /** The device the presence reports playing on, e.g. "Steam Deck". */
+    public get deviceName() {
+        return this._deviceName;
     }
 
     private _connected: boolean = false;
@@ -193,7 +205,8 @@ export class Api extends EventEmitter {
 
         const [discordShortcutAppId] = await Promise.all([
             this.findDiscordShortcutAppId(),
-            this.loadDetectableDiscordApps()
+            this.loadDetectableDiscordApps(),
+            this.loadDeviceName()
         ]);
         if (!discordShortcutAppId) {
             log('No Discord app found');
@@ -251,6 +264,42 @@ export class Api extends EventEmitter {
         this.emit('update');
 
         return result;
+    }
+
+    public async loadDeviceName(): Promise<string> {
+        try {
+            this._deviceName = await this._getDeviceName();
+        } catch (e) {
+            log('Failed to load device name', e);
+            this._deviceName = DEFAULT_DEVICE_NAME;
+        }
+
+        this.emit(Event.deviceNameSet, this._deviceName);
+
+        return this._deviceName;
+    }
+
+    /**
+     * Saves the device name and re-pushes the current activity so Discord picks
+     * the new name up straight away rather than at the next game change.
+     */
+    public async setDeviceName(name: string): Promise<string> {
+        log('Setting device name', name);
+
+        try {
+            this._deviceName = await this._setDeviceName(name);
+        } catch (e) {
+            log('Failed to save device name', e);
+            return this._deviceName;
+        }
+
+        this.emit(Event.deviceNameSet, this._deviceName);
+
+        if (this.runningActivity) {
+            await this.updateActivity(this.runningActivity);
+        }
+
+        return this._deviceName;
     }
 
     public async updateActivity(activity: Activity | null): Promise<boolean> {

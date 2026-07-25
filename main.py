@@ -6,8 +6,15 @@ import struct
 import uuid
 
 import decky
+from settings import SettingsManager # type: ignore
 
 CLIENT_ID = "1055680235682672682"
+
+# SteamOS runs on plenty of hardware that is not a Steam Deck, and there is no
+# reliable way to tell those devices apart automatically, so the name is just
+# something the user tells us.
+DEFAULT_DEVICE_NAME = "Steam Deck"
+SETTING_DEVICE_NAME = "device_name"
 
 OP_HANDSHAKE = 0
 OP_FRAME = 1
@@ -100,6 +107,42 @@ class Plugin:
     async def debug(self, args):
         decky.logger.debug("Called with %s ", args)
 
+    def _get_settings(self):
+        # Created on demand rather than in _main, so a frontend call that lands
+        # before the startup task has run still works.
+        if getattr(self, "settings", None) is None:
+            self.settings = SettingsManager(
+                name="settings",
+                settings_directory=decky.DECKY_PLUGIN_SETTINGS_DIR
+            )
+            self.settings.read()
+
+        return self.settings
+
+    def _read_device_name(self):
+        name = self._get_settings().getSetting(SETTING_DEVICE_NAME, DEFAULT_DEVICE_NAME)
+
+        if not isinstance(name, str) or not name.strip():
+            return DEFAULT_DEVICE_NAME
+
+        return name.strip()
+
+    async def get_device_name(self):
+        return self._read_device_name()
+
+    async def set_device_name(self, name):
+        """Stores the device name shown in the presence, falling back to the
+        default when given nothing usable. Returns the name actually stored so
+        the frontend can show what it ended up with."""
+        cleaned = name.strip() if isinstance(name, str) else ""
+        if not cleaned:
+            cleaned = DEFAULT_DEVICE_NAME
+
+        decky.logger.info("Setting device name to %s", cleaned)
+        self._get_settings().setSetting(SETTING_DEVICE_NAME, cleaned)
+
+        return cleaned
+
     async def clear_activity(self):
         if self.pipe is None:
             return False
@@ -132,7 +175,7 @@ class Plugin:
                 "args": {
                     "pid": os.getpid(),
                     "activity": {
-                        "state": "on Steam Deck",
+                        "state": "on {}".format(self._read_device_name()),
                         "assets": {
                             "large_image": activity["imageUrl"],
                             "small_image": "https://cdn.discordapp.com/app-assets/1055680235682672682/1056080943783354388.png"
