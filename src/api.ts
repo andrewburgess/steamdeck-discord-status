@@ -142,58 +142,6 @@ function normaliseName(name: string): string {
         .trim();
 }
 
-/**
- * Sequels are where Steam and Discord disagree beyond punctuation: "Slay the
- * Spire 2" against "Slay the Spire II". Indexing both spellings lets either
- * side win.
- *
- * Bare I, V and X are deliberately absent: they are far more often part of a
- * title ("Mega Man X") than a number, and mapping them would manufacture keys
- * like "mega man 10".
- */
-const NUMERAL_ALIASES: Array<[string, string]> = [
-    ['ii', '2'],
-    ['iii', '3'],
-    ['iv', '4'],
-    ['vi', '6'],
-    ['vii', '7'],
-    ['viii', '8'],
-    ['ix', '9'],
-    ['xi', '11'],
-    ['xii', '12'],
-    ['xiii', '13'],
-    ['xiv', '14'],
-    ['xv', '15'],
-    ['xvi', '16'],
-    ['xvii', '17'],
-    ['xviii', '18'],
-    ['xix', '19'],
-    ['xx', '20']
-];
-
-/** Alternate spellings of a normalised key with its numerals swapped. */
-function numeralVariants(key: string): string[] {
-    const tokens = key.split(' ');
-    const variants = new Set<string>();
-
-    for (const [roman, arabic] of NUMERAL_ALIASES) {
-        for (const [from, to] of [
-            [roman, arabic],
-            [arabic, roman]
-        ]) {
-            if (!tokens.includes(from)) {
-                continue;
-            }
-
-            variants.add(tokens.map((token) => (token === from ? to : token)).join(' '));
-        }
-    }
-
-    variants.delete(key);
-
-    return [...variants];
-}
-
 function buildDetectableIndex(
     applications: DiscordDetectableApplication[]
 ): DetectableApplicationIndex {
@@ -202,10 +150,8 @@ function buildDetectableIndex(
     const steam: Record<string, string> = Object.create(null);
     const exact: Record<string, string> = Object.create(null);
     const normalised: Record<string, string> = Object.create(null);
-    const variants: Record<string, string> = Object.create(null);
     const ambiguousSteam = new Set<string>();
     const ambiguous = new Set<string>();
-    const ambiguousVariants = new Set<string>();
 
     const claim = (
         map: Record<string, string>,
@@ -257,28 +203,7 @@ function buildDetectableIndex(
         delete normalised[key];
     }
 
-    // Numerals go in a second pass so an invented spelling can never displace
-    // or contest a name some application actually publishes.
-    for (const application of usable) {
-        for (const name of namesOf(application)) {
-            const key = normaliseName(name ?? '');
-            if (!key) {
-                continue;
-            }
-
-            for (const variant of numeralVariants(key)) {
-                if (!(variant in normalised)) {
-                    claim(variants, ambiguousVariants, variant, application.id);
-                }
-            }
-        }
-    }
-
-    for (const key of ambiguousVariants) {
-        delete variants[key];
-    }
-
-    return { steam, exact, normalised: Object.assign(variants, normalised) };
+    return { steam, exact, normalised };
 }
 
 /**
