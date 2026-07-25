@@ -26,6 +26,12 @@ SETTING_DEVICE_NAME = "device_name"
 # id is configurable.
 SETTING_DISCORD_APPLICATION_ID = "discord_application_id"
 
+# How often the supervisor re-asserts the presence while something is running,
+# and how soon it tries again after a failure. Discord rate limits SET_ACTIVITY
+# to roughly five updates per twenty seconds, so both stay well inside that.
+SUPERVISOR_INTERVAL = 60
+SUPERVISOR_RETRY_INTERVAL = 15
+
 OP_HANDSHAKE = 0
 OP_FRAME = 1
 OP_CLOSE = 2
@@ -136,7 +142,7 @@ class Pipe:
             return True
 
         decky.logger.error("Handshake failed %s", data)
-        raise HandshakeException()
+        raise HandshakeException("unexpected handshake response: {}".format(data))
 
     def send(self, payload):
         """Sends a command and reads the reply, raising when Discord refuses it.
@@ -174,7 +180,11 @@ class Pipe:
         while len(buffer) < count:
             chunk = self.socket.recv(count - len(buffer))
             if not chunk:
-                raise EmptyReceiveException()
+                raise EmptyReceiveException(
+                    "Discord closed the connection after {} of {} bytes".format(
+                        len(buffer), count
+                    )
+                )
 
             buffer += chunk
 
@@ -207,6 +217,7 @@ class Plugin:
     activity = None
     pipe = None
     settings = None
+    supervisor = None
 
     async def debug(self, args):
         decky.logger.debug("Called with %s ", args)
@@ -369,13 +380,13 @@ class Plugin:
                 return True
             except (CommandException, HandshakeException) as e:
                 # Discord answered and refused, so trying again changes nothing.
-                decky.logger.error("Discord rejected the activity: %s", e)
+                decky.logger.error("Discord rejected the activity: %r", e)
                 self._drop_pipe()
                 return False
             except (OSError, EmptyReceiveException, ValueError) as e:
                 # A pipe held open since the last update may have been closed by
                 # a Discord restart, and a fresh one usually works.
-                decky.logger.warning("Activity update failed (attempt %d): %s", attempt + 1, e)
+                decky.logger.warning("Activity update failed (attempt %d): %r", attempt + 1, e)
                 self._drop_pipe()
 
         return False
@@ -399,7 +410,7 @@ class Plugin:
                     "nonce": str(uuid.uuid4())
                 })
             except (CommandException, EmptyReceiveException, OSError, ValueError) as e:
-                decky.logger.warning("Could not clear activity: %s", e)
+                decky.logger.warning("Could not clear activity: %r", e)
                 self._drop_pipe()
                 return False
 
@@ -434,7 +445,7 @@ class Plugin:
         try:
             return self._ensure_pipe(self._app_id_for(self.activity)) is not None
         except (EmptyReceiveException, HandshakeException, OSError, ValueError) as e:
-            decky.logger.warning("Discord probe failed: %s", e)
+            decky.logger.warning("Discord probe failed: %r", e)
             self._drop_pipe()
             return False
 
@@ -459,15 +470,58 @@ class Plugin:
             self.activity = None
             self._drop_pipe()
 
+    async def _supervise(self):
+        """Re-asserts the presence periodically while something is running.
+
+        Nothing else recovers a presence that has gone stale: a Discord restart,
+        a resume from suspend or a dropped socket would otherwise leave it wrong
+        until the user happened to open the plugin's panel, which reconnects as
+        a side effect and hides the problem.
+        """
+        delay = SUPERVISOR_INTERVAL
+
+        while True:
+            await asyncio.sleep(delay)
+            delay = SUPERVISOR_INTERVAL
+
+            try:
+                async with self._get_lock():
+                    if self.activity is None:
+                        continue
+
+                    if not self._push_activity(self.activity):
+                        decky.logger.warning("Supervisor could not refresh the activity")
+                        delay = SUPERVISOR_RETRY_INTERVAL
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # The loop has to outlive anything a single pass can throw.
+                decky.logger.error("Supervisor pass failed: %r", e)
+                delay = SUPERVISOR_RETRY_INTERVAL
+
     # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
     async def _main(self):
         decky.logger.info("Starting Discord status plugin")
 
         await self.is_connected()
 
+        self.supervisor = asyncio.create_task(self._supervise())
+
 
     # Function called first during the unload process, utilize this to handle your plugin being removed
     async def _unload(self):
         decky.logger.info("Unloading Discord status plugin")
+
+        if self.supervisor is not None:
+            supervisor = self.supervisor
+            self.supervisor = None
+
+            # Cancelling only asks; the task has to be awaited or it is still
+            # pending when the loop tears down and asyncio complains.
+            supervisor.cancel()
+            try:
+                await supervisor
+            except asyncio.CancelledError:
+                pass
 
         await self.disconnect()
