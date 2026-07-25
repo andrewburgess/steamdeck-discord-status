@@ -16,6 +16,19 @@ whatever you are actually playing on, and the presence follows. Clearing the fie
 `Steam Deck`. The name is saved on the deck and applies immediately to whatever is currently
 running.
 
+### Discord Application ID (advanced)
+
+The bold first line of your status is the *name of the Discord application* the plugin connects as,
+and Discord gives no way to override it from a rich presence payload — `SET_ACTIVITY` accepts
+`details`, `state`, `timestamps`, `assets` and friends, but no `name`. The only way to change that
+text is to connect as a different application.
+
+So under **Advanced Settings** you can point the plugin at a Discord application of your own:
+create one in the [developer portal](https://discord.com/developers/applications), name it whatever
+you want the bold line to read, and paste its ID in. Leave the field blank to go back to the
+plugin's own application. Games that Discord already recognises are unaffected — those connect as
+the game's own application so the status shows the real game name.
+
 ## Development
 
 Requires Node (see `mise.toml`) and pnpm. No Docker, no `decky` CLI, no WSL — the deploy script

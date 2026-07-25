@@ -16,6 +16,12 @@ CLIENT_ID = "1055680235682672682"
 DEFAULT_DEVICE_NAME = "Steam Deck"
 SETTING_DEVICE_NAME = "device_name"
 
+# Discord takes the bold application name in the presence from whichever
+# application the client_id belongs to -- SET_ACTIVITY has no field for it. The
+# only way to change that text is to hand over a different application, so the
+# id is configurable.
+SETTING_DISCORD_APPLICATION_ID = "discord_application_id"
+
 OP_HANDSHAKE = 0
 OP_FRAME = 1
 OP_CLOSE = 2
@@ -127,8 +133,56 @@ class Plugin:
 
         return name.strip()
 
+    def _read_discord_application_id(self):
+        app_id = self._get_settings().getSetting(SETTING_DISCORD_APPLICATION_ID, CLIENT_ID)
+
+        if not Plugin._is_valid_application_id(app_id):
+            return CLIENT_ID
+
+        return app_id.strip()
+
+    @staticmethod
+    def _is_valid_application_id(value):
+        """Discord application ids are snowflakes: 17 to 20 digits."""
+        if not isinstance(value, str):
+            return False
+
+        stripped = value.strip()
+
+        return stripped.isdigit() and 17 <= len(stripped) <= 20
+
     async def get_device_name(self):
         return self._read_device_name()
+
+    async def get_discord_application_id(self):
+        return self._read_discord_application_id()
+
+    async def set_discord_application_id(self, app_id):
+        """Stores the Discord application id used when the running game is not
+        one Discord already knows about. A blank value restores the plugin's own
+        application; anything malformed is rejected and leaves the setting as it
+        was. Returns the id actually in effect."""
+        # Only a blank string means "clear this"; anything that is not a string
+        # is malformed input and must not wipe a custom application id.
+        if not isinstance(app_id, str):
+            decky.logger.warning("Rejecting non-string Discord application id %r", app_id)
+            return self._read_discord_application_id()
+
+        cleaned = app_id.strip()
+
+        if not cleaned:
+            decky.logger.info("Restoring default Discord application id")
+            self._get_settings().setSetting(SETTING_DISCORD_APPLICATION_ID, CLIENT_ID)
+            return CLIENT_ID
+
+        if not Plugin._is_valid_application_id(cleaned):
+            decky.logger.warning("Rejecting invalid Discord application id %s", cleaned)
+            return self._read_discord_application_id()
+
+        decky.logger.info("Setting Discord application id to %s", cleaned)
+        self._get_settings().setSetting(SETTING_DISCORD_APPLICATION_ID, cleaned)
+
+        return cleaned
 
     async def set_device_name(self, name):
         """Stores the device name shown in the presence, falling back to the
@@ -188,7 +242,7 @@ class Plugin:
                 "nonce": str(uuid.uuid4())
             }
 
-            discord_id = CLIENT_ID
+            discord_id = self._read_discord_application_id()
 
             if "discordId" in activity:
                 discord_id = activity["discordId"]

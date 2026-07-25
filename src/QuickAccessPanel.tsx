@@ -25,14 +25,20 @@ const QuickAccessPanel: FC<{}> = () => {
     }, []);
 
     // Held locally while typing so we save once the field is done with, rather
-    // than pushing a new presence to Discord on every keystroke. The draft
-    // follows settingsRevision so it snaps back to the stored value after a
-    // save, including one the backend normalised.
+    // than pushing a new presence to Discord on every keystroke. Both drafts
+    // follow settingsRevision so they snap back to the stored value after a
+    // save, including one the backend normalised or refused.
     const [deviceNameDraft, setDeviceNameDraft] = useState(state.deviceName);
+    const [applicationIdDraft, setApplicationIdDraft] = useState(state.discordApplicationId);
+    const [showAdvanced, setShowAdvanced] = useState(false);
 
     useEffect(() => {
         setDeviceNameDraft(state.deviceName);
     }, [state.deviceName, state.settingsRevision]);
+
+    useEffect(() => {
+        setApplicationIdDraft(state.discordApplicationId);
+    }, [state.discordApplicationId, state.settingsRevision]);
 
     const onDeviceNameCommit = useCallback(() => {
         if (deviceNameDraft.trim() === state.deviceName) {
@@ -41,6 +47,14 @@ const QuickAccessPanel: FC<{}> = () => {
 
         dispatch(Actions.changeDeviceName(deviceNameDraft));
     }, [deviceNameDraft, dispatch, state.deviceName]);
+
+    const onApplicationIdCommit = useCallback(() => {
+        if (applicationIdDraft.trim() === state.discordApplicationId) {
+            return;
+        }
+
+        dispatch(Actions.changeDiscordApplicationId(applicationIdDraft));
+    }, [applicationIdDraft, dispatch, state.discordApplicationId]);
 
     const options = useMemo(
         () => [
@@ -174,6 +188,32 @@ const QuickAccessPanel: FC<{}> = () => {
                     />
                 </div>
             </PanelSectionRow>
+            <PanelSectionRow>
+                <ButtonItem layout="below" onClick={() => setShowAdvanced((shown) => !shown)}>
+                    {showAdvanced ? 'Hide Advanced Settings' : 'Advanced Settings'}
+                </ButtonItem>
+            </PanelSectionRow>
+            {showAdvanced && (
+                <PanelSectionRow>
+                    <div style={{ padding: '4px 0px 8px' }}>
+                        <TextField
+                            label="Discord Application ID"
+                            description={
+                                'The bold line of your status is the name of this Discord ' +
+                                'application, which Discord will not let a plugin change. Point ' +
+                                'this at your own application to rename it. Leave blank to ' +
+                                'restore the default. Does not apply to games Discord already ' +
+                                'recognises.'
+                            }
+                            value={applicationIdDraft}
+                            onChange={(e) => setApplicationIdDraft(e.target.value)}
+                            onBlur={onApplicationIdCommit}
+                            mustBeNumeric={true}
+                            bShowClearAction={true}
+                        />
+                    </div>
+                </PanelSectionRow>
+            )}
             <PanelSectionRow>
                 <Field
                     bottomSeparator="none"

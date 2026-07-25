@@ -44,6 +44,12 @@ export enum Event {
     connecting = 'connecting',
     deviceNameSet = 'device-name-set',
     /**
+     * The Discord *application* we report presence as changed -- a snowflake
+     * from the Discord developer portal, used as the RPC client_id. Not to be
+     * confused with discordShortcutFound.
+     */
+    discordApplicationIdSet = 'discord-application-id-set',
+    /**
      * We located Discord itself in the Steam library. Carries the *Steam* app id
      * of the non-Steam shortcut, which is what we launch. Nothing to do with
      * Discord's own application ids.
@@ -55,6 +61,9 @@ export enum Event {
 
 /** Kept in sync with DEFAULT_DEVICE_NAME in main.py. */
 export const DEFAULT_DEVICE_NAME = 'Steam Deck';
+
+/** The plugin's own Discord application, and CLIENT_ID in main.py. */
+export const DEFAULT_DISCORD_APPLICATION_ID = '1055680235682672682';
 
 const DISCORD_SHORTCUT_COMMANDS = ['com.discordapp.Discord', 'dev.vencord.Vesktop'];
 
@@ -133,8 +142,10 @@ export class Api extends EventEmitter {
     private _clearActivity = callable<[], boolean>('clear_activity');
     private _disconnect = callable<[], boolean>('disconnect');
     private _getDeviceName = callable<[], string>('get_device_name');
+    private _getDiscordApplicationId = callable<[], string>('get_discord_application_id');
     private _isConnected = callable<[], boolean>('is_connected');
     private _setDeviceName = callable<[string], string>('set_device_name');
+    private _setDiscordApplicationId = callable<[string], string>('set_discord_application_id');
     private _updateActivity = callable<[Activity], boolean>('update_activity');
 
     private _activities: {
@@ -148,6 +159,17 @@ export class Api extends EventEmitter {
     /** The device the presence reports playing on, e.g. "Steam Deck". */
     public get deviceName() {
         return this._deviceName;
+    }
+
+    private _discordApplicationId: string = DEFAULT_DISCORD_APPLICATION_ID;
+    /**
+     * The Discord application used for games Discord does not recognise. Its
+     * name in the developer portal is the bold line of the presence, which
+     * SET_ACTIVITY cannot override -- swapping applications is the only way to
+     * change that text.
+     */
+    public get discordApplicationId() {
+        return this._discordApplicationId;
     }
 
     private _connected: boolean = false;
@@ -206,7 +228,8 @@ export class Api extends EventEmitter {
         const [discordShortcutAppId] = await Promise.all([
             this.findDiscordShortcutAppId(),
             this.loadDetectableDiscordApps(),
-            this.loadDeviceName()
+            this.loadDeviceName(),
+            this.loadDiscordApplicationId()
         ]);
         if (!discordShortcutAppId) {
             log('No Discord app found');
@@ -300,6 +323,58 @@ export class Api extends EventEmitter {
         }
 
         return this._deviceName;
+    }
+
+    public async loadDiscordApplicationId(): Promise<string> {
+        try {
+            this._discordApplicationId = await this._getDiscordApplicationId();
+        } catch (e) {
+            log('Failed to load Discord application id', e);
+            this._discordApplicationId = DEFAULT_DISCORD_APPLICATION_ID;
+        }
+
+        this.emit(Event.discordApplicationIdSet, this._discordApplicationId);
+
+        return this._discordApplicationId;
+    }
+
+    /**
+     * Saves the Discord application id. The backend rejects anything that is not
+     * a snowflake and hands back the id still in effect, so a typo leaves the
+     * setting alone rather than breaking the presence.
+     */
+    public async setDiscordApplicationId(applicationId: string): Promise<string> {
+        log('Setting Discord application id', applicationId);
+
+        const requested = applicationId.trim();
+
+        try {
+            this._discordApplicationId = await this._setDiscordApplicationId(applicationId);
+        } catch (e) {
+            log('Failed to save Discord application id', e);
+            return this._discordApplicationId;
+        }
+
+        const rejected = requested !== '' && requested !== this._discordApplicationId;
+
+        // Emitted either way so the panel resets its draft back to whatever is
+        // actually in effect, including when the backend refused the input.
+        this.emit(Event.discordApplicationIdSet, this._discordApplicationId);
+
+        if (rejected) {
+            toaster.toast({
+                title: 'Discord',
+                body: 'That is not a valid application ID. It should be 17-20 digits.'
+            });
+
+            return this._discordApplicationId;
+        }
+
+        if (this.runningActivity) {
+            await this.updateActivity(this.runningActivity);
+        }
+
+        return this._discordApplicationId;
     }
 
     public async updateActivity(activity: Activity | null): Promise<boolean> {
