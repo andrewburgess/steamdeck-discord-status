@@ -6,6 +6,9 @@
     "scripts": {
         "build": "shx rm -rf dist && rollup -c",
         "watch": "rollup -c -w",
+        "deck": "node scripts/deploy.mjs",
+        "deck:watch": "node scripts/deploy.mjs --watch",
+        "zip": "node scripts/deploy.mjs --zip --no-deploy",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "repository": {

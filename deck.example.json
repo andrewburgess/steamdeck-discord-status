@@ -1,0 +1,8 @@
+{
+    "host": "steamdeck.local",
+    "user": "deck",
+    "port": 22,
+    "identityFile": "~/.ssh/id_rsa",
+    "password": "your deck sudo password",
+    "deckDir": "/home/deck"
+}
