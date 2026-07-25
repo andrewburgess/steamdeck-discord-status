@@ -28,16 +28,33 @@ export interface Activity {
     localImageUrl: string;
 }
 
+/** An entry from Discord's detectable applications endpoint. */
 interface DiscordDetectableApplication {
-    executables: Array<{ name: string; os: 'darwin' | 'win32' | 'linux' }>;
+    aliases?: string[];
     id: string;
     name: string;
 }
 
-interface CachedDiscordDetectableApplications {
-    lastFetch: number;
-    applications: DiscordDetectableApplication[];
+/**
+ * Name lookups built from that endpoint. The raw response is ~12MB of
+ * executables, hashes and overlay settings we never read; the two maps below
+ * come to well under 1MB.
+ */
+interface DetectableApplicationIndex {
+    /** Exact display names. Tried first so a fuzzy collision cannot beat one. */
+    exact: Record<string, string>;
+    /** Normalised names plus aliases, with ambiguous keys removed. */
+    normalised: Record<string, string>;
 }
+
+interface CachedDetectableApplications extends DetectableApplicationIndex {
+    lastFetch: number;
+    version: number;
+}
+
+/** Bumped when the cached shape changes, so old entries are refetched. */
+const DETECTABLE_CACHE_VERSION = 2;
+const DETECTABLE_CACHE_TTL = 1000 * 60 * 60 * 24;
 
 export enum Event {
     connect = 'connect',
@@ -98,7 +115,80 @@ async function isDiscord(appInfo: AppOverview) {
     });
 }
 
-function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): Activity {
+/**
+ * Steam and Discord spell the same game differently -- "HELLDIVERS™ 2" against
+ * "HELLDIVERS 2", "For The King II" against "For the King II", "Tavern Keeper
+ * 🍻" against "Tavern Keeper". Fold away the decoration so those still line up.
+ */
+function normaliseName(name: string): string {
+    return name
+        .toLowerCase()
+        .replace(/[™®©]/g, '')
+        .replace(/[‘’]/g, "'")
+        .replace(/[^a-z0-9']+/g, ' ')
+        .trim();
+}
+
+function buildDetectableIndex(
+    applications: DiscordDetectableApplication[]
+): DetectableApplicationIndex {
+    const exact: Record<string, string> = {};
+    const normalised: Record<string, string> = {};
+    const ambiguous = new Set<string>();
+
+    for (const application of applications) {
+        if (!application?.id || !application?.name) {
+            continue;
+        }
+
+        exact[application.name] = application.id;
+
+        for (const name of [application.name, ...(application.aliases ?? [])]) {
+            const key = normaliseName(name ?? '');
+            if (!key) {
+                continue;
+            }
+
+            if (key in normalised) {
+                if (normalised[key] !== application.id) {
+                    ambiguous.add(key);
+                }
+                continue;
+            }
+
+            normalised[key] = application.id;
+        }
+    }
+
+    // A key two different applications both claim would be a coin flip, and
+    // reporting the wrong game is worse than reporting none.
+    for (const key of ambiguous) {
+        delete normalised[key];
+    }
+
+    return { exact, normalised };
+}
+
+function findDetectableApplicationId(
+    index: DetectableApplicationIndex | null,
+    name: string
+): string | undefined {
+    if (!index) {
+        return undefined;
+    }
+
+    // These come from JSON.parse, so a game called "constructor" would
+    // otherwise pick up something off Object.prototype.
+    const match = index.exact[name] ?? index.normalised[normaliseName(name)];
+
+    return typeof match === 'string' ? match : undefined;
+}
+
+function convertAppOverviewToActivity(
+    appInfo: AppOverview,
+    detectable: DetectableApplicationIndex | null,
+    startTime?: Date
+): Activity {
     let image =
         appInfo.app_type === AppType.Shortcut
             ? 'https://cdn.discordapp.com/app-assets/1055680235682672682/1057044202631987340.png'
@@ -111,14 +201,7 @@ function convertAppOverviewToActivity(appInfo: AppOverview, startTime?: Date): A
         }
     }
 
-    let discordRemoteId: string | undefined = undefined;
-    const detectableCached = window.localStorage.getItem(StorageKeys.DetectableCache);
-    if (detectableCached) {
-        const detectable = JSON.parse(detectableCached) as CachedDiscordDetectableApplications;
-        discordRemoteId = detectable.applications.find(
-            (app) => app.name === appInfo.display_name
-        )?.id;
-    }
+    const discordRemoteId = findDetectableApplicationId(detectable, appInfo.display_name);
 
     if (!discordRemoteId && appInfo.app_type === AppType.Shortcut) {
         image = 'steamdeck';
@@ -154,6 +237,9 @@ export class Api extends EventEmitter {
     public get activities() {
         return this._activities;
     }
+
+    /** Parsed once per refresh rather than per activity. */
+    private _detectableApplications: DetectableApplicationIndex | null = null;
 
     private _deviceName: string = DEFAULT_DEVICE_NAME;
     /** The device the presence reports playing on, e.g. "Steam Deck". */
@@ -211,6 +297,13 @@ export class Api extends EventEmitter {
             SteamClient.User.RegisterForResumeSuspendedGamesProgress(this.onResume.bind(this))
         );
         this.hooks.push(SteamClient.User.RegisterForPrepareForSystemSuspendProgress(this.onSuspend.bind(this)));
+
+        // Seed from the last run so activities built before the first refresh
+        // completes still resolve to a Discord application.
+        const cached = this.readDetectableCache();
+        if (cached) {
+            this._detectableApplications = { exact: cached.exact, normalised: cached.normalised };
+        }
 
         this.updateActivityState();
     }
@@ -410,7 +503,10 @@ export class Api extends EventEmitter {
             }
 
             log('Initializing with activity', appId, gameInfo.display_name);
-            this.activities[appId.toString()] = convertAppOverviewToActivity(gameInfo);
+            this.activities[appId.toString()] = convertAppOverviewToActivity(
+                gameInfo,
+                this._detectableApplications
+            );
         }
 
         if (Router.MainRunningApp && !this._runningActivity) {
@@ -436,7 +532,10 @@ export class Api extends EventEmitter {
                     await this.updateActivity(this.runningActivity);
                 }
             } else {
-                const activity = convertAppOverviewToActivity(gameInfo);
+                const activity = convertAppOverviewToActivity(
+                    gameInfo,
+                    this._detectableApplications
+                );
                 this._activities[gameId] = activity;
 
                 const previousRunning = this.runningActivity;
@@ -606,33 +705,62 @@ export class Api extends EventEmitter {
         return null;
     }
 
-    protected async loadDetectableDiscordApps() {
-        const cached = window.localStorage.getItem(StorageKeys.DetectableCache);
+    /**
+     * Refreshes the detectable application index, daily at most. Only the name
+     * lookups are kept: the raw response is ~12MB and re-parsing that for every
+     * activity we build cost tens of milliseconds a time.
+     */
+    protected async loadDetectableDiscordApps(): Promise<void> {
+        const parsed = this.readDetectableCache();
+        const stale = parsed && { exact: parsed.exact, normalised: parsed.normalised };
 
-        if (cached) {
-            const parsed = JSON.parse(cached) as CachedDiscordDetectableApplications;
-            if (Date.now() - parsed.lastFetch < 1000 * 60 * 60 * 24) {
-                log('Loaded cached detectable apps');
-                return parsed.applications;
-            }
+        if (parsed && stale && Date.now() - parsed.lastFetch < DETECTABLE_CACHE_TTL) {
+            this._detectableApplications = stale;
+            log('Loaded cached detectable apps');
+            return;
         }
 
         try {
             const response = await fetch('https://discord.com/api/v10/applications/detectable');
             const data = (await response.json()) as DiscordDetectableApplication[];
+            const index = buildDetectableIndex(data);
 
-            const toCache = {
-                lastFetch: Date.now(),
-                applications: data
-            };
+            // Deliberately the same key as the old full response: writing the
+            // trimmed index back replaces that ~12MB blob instead of orphaning
+            // it in localStorage forever.
+            window.localStorage.setItem(
+                StorageKeys.DetectableCache,
+                JSON.stringify({
+                    ...index,
+                    lastFetch: Date.now(),
+                    version: DETECTABLE_CACHE_VERSION
+                })
+            );
 
-            window.localStorage.setItem(StorageKeys.DetectableCache, JSON.stringify(toCache));
-
-            log('Loaded detectable apps');
-            return data;
+            this._detectableApplications = index;
+            log('Loaded detectable apps', Object.keys(index.exact).length);
         } catch (e) {
+            // Better a day-old index than none, so a deck offline at startup
+            // still recognises games.
             log('Failed to load detectable apps', e);
-            return [];
+            this._detectableApplications = stale ?? null;
+        }
+    }
+
+    /** Reads the cached index, or null when absent, unreadable or outdated. */
+    private readDetectableCache(): CachedDetectableApplications | null {
+        const cached = window.localStorage.getItem(StorageKeys.DetectableCache);
+        if (!cached) {
+            return null;
+        }
+
+        try {
+            const parsed = JSON.parse(cached) as CachedDetectableApplications;
+
+            return parsed?.version === DETECTABLE_CACHE_VERSION ? parsed : null;
+        } catch (e) {
+            log('Discarding unreadable detectable app cache', e);
+            return null;
         }
     }
 
