@@ -6,7 +6,7 @@ import struct
 import uuid
 
 import decky
-from settings import SettingsManager # type: ignore
+from settings import SettingsManager
 
 CLIENT_ID = "1055680235682672682"
 
@@ -158,10 +158,8 @@ class Plugin:
         return self._read_discord_application_id()
 
     async def set_discord_application_id(self, app_id):
-        """Stores the Discord application id used when the running game is not
-        one Discord already knows about. A blank value restores the plugin's own
-        application; anything malformed is rejected and leaves the setting as it
-        was. Returns the id actually in effect."""
+        """Fallback Discord application ID to use when we can't otherwise match an existing one that would
+        have the correct rich presence display."""
         # Only a blank string means "clear this"; anything that is not a string
         # is malformed input and must not wipe a custom application id.
         if not isinstance(app_id, str):
@@ -185,9 +183,7 @@ class Plugin:
         return cleaned
 
     async def set_device_name(self, name):
-        """Stores the device name shown in the presence, falling back to the
-        default when given nothing usable. Returns the name actually stored so
-        the frontend can show what it ended up with."""
+        """Allows for customizing device name shown in rich presence since not everyone is on a Steam Deck anymore"""
         cleaned = name.strip() if isinstance(name, str) else ""
         if not cleaned:
             cleaned = DEFAULT_DEVICE_NAME

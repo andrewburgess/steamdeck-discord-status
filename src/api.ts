@@ -5,7 +5,10 @@ import { logger } from './util';
 import { AppDetails } from '@decky/ui/dist/globals/steam-client/App';
 import { AppOverview, AppType, Hook } from './SteamClient';
 import { AppLifetimeNotification } from '@decky/ui/dist/globals/steam-client/GameSessions';
-import { ESuspendResumeProgressState, SuspendProgress } from '@decky/ui/dist/globals/steam-client/User';
+import {
+    ESuspendResumeProgressState,
+    SuspendProgress
+} from '@decky/ui/dist/globals/steam-client/User';
 
 const log = logger('API');
 
@@ -56,8 +59,8 @@ interface DetectableApplicationIndex {
     steam: Record<string, string>;
     /** Exact display names. Tried before fuzzy so a collision cannot beat one. */
     exact: Record<string, string>;
-    /** Normalised names plus aliases, with ambiguous keys removed. */
-    normalised: Record<string, string>;
+    /** Normalized names plus aliases, with ambiguous keys removed. */
+    normalized: Record<string, string>;
 }
 
 interface CachedDetectableApplications extends DetectableApplicationIndex {
@@ -149,7 +152,7 @@ function buildDetectableIndex(
     // something inherited from Object.prototype.
     const steam: Record<string, string> = Object.create(null);
     const exact: Record<string, string> = Object.create(null);
-    const normalised: Record<string, string> = Object.create(null);
+    const normalized: Record<string, string> = Object.create(null);
     const ambiguousSteam = new Set<string>();
     const ambiguous = new Set<string>();
 
@@ -188,7 +191,7 @@ function buildDetectableIndex(
         for (const name of namesOf(application)) {
             const key = normaliseName(name ?? '');
             if (key) {
-                claim(normalised, ambiguous, key, application.id);
+                claim(normalized, ambiguous, key, application.id);
             }
         }
     }
@@ -200,16 +203,16 @@ function buildDetectableIndex(
     // A key two different applications both claim would be a coin flip, and
     // reporting the wrong game is worse than reporting none.
     for (const key of ambiguous) {
-        delete normalised[key];
+        delete normalized[key];
     }
 
-    return { steam, exact, normalised };
+    return { steam, exact, normalized: normalized };
 }
 
 /**
  * Resolves a Discord application, most reliable signal first: the Steam appid
  * is an identifier both sides agree on, an exact display name is solid, and a
- * normalised name is the last resort.
+ * normalized name is the last resort.
  */
 function findDetectableApplicationId(
     index: DetectableApplicationIndex | null,
@@ -225,7 +228,7 @@ function findDetectableApplicationId(
     const match =
         (steamAppId === null ? undefined : index.steam[steamAppId]) ??
         index.exact[name] ??
-        index.normalised[normaliseName(name)];
+        index.normalized[normaliseName(name)];
 
     return typeof match === 'string' ? match : undefined;
 }
@@ -249,8 +252,7 @@ function convertAppOverviewToActivity(
 
     // Non-Steam shortcuts get a synthesised appid that means nothing to
     // Discord, so only real Steam apps are looked up by id.
-    const steamAppId =
-        appInfo.app_type === AppType.Shortcut ? null : appInfo.appid.toString();
+    const steamAppId = appInfo.app_type === AppType.Shortcut ? null : appInfo.appid.toString();
 
     const discordRemoteId = findDetectableApplicationId(
         detectable,
@@ -351,7 +353,9 @@ export class Api extends EventEmitter {
         this.hooks.push(
             SteamClient.User.RegisterForResumeSuspendedGamesProgress(this.onResume.bind(this))
         );
-        this.hooks.push(SteamClient.User.RegisterForPrepareForSystemSuspendProgress(this.onSuspend.bind(this)));
+        this.hooks.push(
+            SteamClient.User.RegisterForPrepareForSystemSuspendProgress(this.onSuspend.bind(this))
+        );
 
         // Seed from the last run so activities built before the first refresh
         // completes still resolve to a Discord application.
@@ -360,7 +364,7 @@ export class Api extends EventEmitter {
             this._detectableApplications = {
                 steam: cached.steam,
                 exact: cached.exact,
-                normalised: cached.normalised
+                normalized: cached.normalized
             };
         }
 
@@ -774,7 +778,7 @@ export class Api extends EventEmitter {
         const stale = parsed && {
             steam: parsed.steam,
             exact: parsed.exact,
-            normalised: parsed.normalised
+            normalized: parsed.normalized
         };
 
         if (parsed && stale && Date.now() - parsed.lastFetch < DETECTABLE_CACHE_TTL) {
@@ -827,7 +831,7 @@ export class Api extends EventEmitter {
                 parsed?.version === DETECTABLE_CACHE_VERSION &&
                 !!parsed.steam &&
                 !!parsed.exact &&
-                !!parsed.normalised;
+                !!parsed.normalized;
 
             return usable ? parsed : null;
         } catch (e) {

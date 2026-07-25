@@ -27,7 +27,7 @@ const QuickAccessPanel: FC<{}> = () => {
     // Held locally while typing so we save once the field is done with, rather
     // than pushing a new presence to Discord on every keystroke. Both drafts
     // follow settingsRevision so they snap back to the stored value after a
-    // save, including one the backend normalised or refused.
+    // save, including one the backend normalized or refused.
     const [deviceNameDraft, setDeviceNameDraft] = useState(state.deviceName);
     const [applicationIdDraft, setApplicationIdDraft] = useState(state.discordApplicationId);
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -94,16 +94,17 @@ const QuickAccessPanel: FC<{}> = () => {
                             </div>
                         </Fragment>
                     )}
-                {state.connectionStatus === ConnectionStatus.DISCONNECTED && state.discordShortcutAppId && (
-                    <Fragment>
-                        <ButtonItem layout="below" onClick={onLaunchDiscord}>
-                            Launch Discord
-                        </ButtonItem>
-                        <div style={{ padding: '4px 0px' }}>
-                            Discord must be running for this plugin to connect.
-                        </div>
-                    </Fragment>
-                )}
+                {state.connectionStatus === ConnectionStatus.DISCONNECTED &&
+                    state.discordShortcutAppId && (
+                        <Fragment>
+                            <ButtonItem layout="below" onClick={onLaunchDiscord}>
+                                Launch Discord
+                            </ButtonItem>
+                            <div style={{ padding: '4px 0px' }}>
+                                Discord must be running for this plugin to connect.
+                            </div>
+                        </Fragment>
+                    )}
                 {state.connectionStatus === ConnectionStatus.CONNECTED && (
                     <Fragment>
                         <Field label="Connected">
@@ -199,11 +200,8 @@ const QuickAccessPanel: FC<{}> = () => {
                         <TextField
                             label="Discord Application ID"
                             description={
-                                'The bold line of your status is the name of this Discord ' +
-                                'application, which Discord will not let a plugin change. Point ' +
-                                'this at your own application to rename it. Leave blank to ' +
-                                'restore the default. Does not apply to games Discord already ' +
-                                'recognises.'
+                                "This application is the fallback one used when we cannot detect one from Discord's set of applications. " +
+                                'By default, this will display "Steam" as the activity, with the game name as a subtitle item'
                             }
                             value={applicationIdDraft}
                             onChange={(e) => setApplicationIdDraft(e.target.value)}
@@ -219,8 +217,6 @@ const QuickAccessPanel: FC<{}> = () => {
                     bottomSeparator="none"
                     focusable={false}
                     padding="none"
-                    // Without this the children container is sized to its
-                    // content and pinned right, so width/padding do nothing.
                     childrenContainerWidth="max"
                 >
                     <div

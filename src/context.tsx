@@ -1,12 +1,6 @@
 import React, { createContext, useEffect, useReducer } from 'react';
 import { ActionsUnion, createAction, createActionPayload } from './actions';
-import {
-    Activity,
-    Api,
-    DEFAULT_DEVICE_NAME,
-    DEFAULT_DISCORD_APPLICATION_ID,
-    Event
-} from './api';
+import { Activity, Api, DEFAULT_DEVICE_NAME, DEFAULT_DISCORD_APPLICATION_ID, Event } from './api';
 
 export enum ConnectionStatus {
     DISCONNECTED,
@@ -26,7 +20,7 @@ interface State {
     /**
      * Bumped every time a setting comes back from the backend, even when the
      * value is unchanged. Editable fields watch this to reset their draft after
-     * a save the backend rejected or normalised.
+     * a save the backend rejected or normalized.
      */
     settingsRevision: number;
 }
@@ -75,10 +69,9 @@ export const Actions = {
     setDiscordApplicationId: createActionPayload<typeof ACTION_SET_DISCORD_APPLICATION_ID, string>(
         ACTION_SET_DISCORD_APPLICATION_ID
     ),
-    setDiscordShortcutAppId: createActionPayload<
-        typeof ACTION_SET_DISCORD_SHORTCUT_APP_ID,
-        string
-    >(ACTION_SET_DISCORD_SHORTCUT_APP_ID),
+    setDiscordShortcutAppId: createActionPayload<typeof ACTION_SET_DISCORD_SHORTCUT_APP_ID, string>(
+        ACTION_SET_DISCORD_SHORTCUT_APP_ID
+    ),
     setRunningApp: createActionPayload<typeof ACTION_SET_RUNNING_APP, Activity | null>(
         ACTION_SET_RUNNING_APP
     ),
