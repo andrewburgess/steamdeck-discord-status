@@ -100,8 +100,15 @@ export const DEFAULT_DISCORD_APPLICATION_ID = '1055680235682672682';
 
 const DISCORD_SHORTCUT_COMMANDS = ['com.discordapp.Discord', 'dev.vencord.Vesktop'];
 
-async function isDiscord(appInfo: AppOverview) {
-    return new Promise((resolve) => {
+async function isDiscord(appInfo: AppOverview): Promise<boolean> {
+    // Only ever a non-Steam shortcut, and resolving app details can take up to
+    // the timeout below, so rule everything else out without asking. This is
+    // the common case: it runs for every game the user launches.
+    if (!appInfo || appInfo.app_type !== AppType.Shortcut) {
+        return false;
+    }
+
+    return new Promise<boolean>((resolve) => {
         let timeoutId: ReturnType<typeof setTimeout> | undefined;
         try {
             const { unregister } = SteamClient.Apps.RegisterForAppDetails(
@@ -337,6 +344,10 @@ export class Api extends EventEmitter {
 
     private hooks: Hook[];
 
+    /** Chain the app lifetime notifications are handled on, one at a time. */
+    private notifications: Promise<void> = Promise.resolve();
+    private pendingNotifications = 0;
+
     private constructor() {
         super();
 
@@ -561,6 +572,10 @@ export class Api extends EventEmitter {
         for (const app of Router.RunningApps) {
             const appId = app.appid.toString();
             const gameInfo = appStore.GetAppOverviewByGameID(appId);
+            if (!gameInfo) {
+                continue;
+            }
+
             if (await isDiscord(gameInfo)) {
                 return;
             }
@@ -583,12 +598,33 @@ export class Api extends EventEmitter {
         }
     }
 
-    protected async onAppLifetimeNotification(app: AppLifetimeNotification) {
+    /**
+     * Queues a notification behind the ones before it. Handling one can await
+     * app details, so letting them run concurrently allowed a slower earlier
+     * notification to finish last and leave a stale game reported.
+     */
+    protected onAppLifetimeNotification(app: AppLifetimeNotification) {
+        this.pendingNotifications += 1;
+
+        this.notifications = this.notifications
+            .then(() => this.handleAppLifetimeNotification(app))
+            .catch((e) => log('Failed to handle app lifetime notification', e))
+            .then(() => {
+                this.pendingNotifications -= 1;
+            });
+    }
+
+    protected async handleAppLifetimeNotification(app: AppLifetimeNotification) {
         const gameId = app.unAppID.toString();
 
         const gameInfo = appStore.GetAppOverviewByGameID(gameId);
 
         if (app.bRunning) {
+            if (!gameInfo) {
+                log('No app overview for', gameId);
+                return;
+            }
+
             if (await isDiscord(gameInfo)) {
                 const connected = await this.checkConnection();
                 if (connected && this.runningActivity) {
@@ -633,7 +669,10 @@ export class Api extends EventEmitter {
                 delete this._activities[gameId];
             }
 
-            if (wasCleared) {
+            // Skipped when something is already queued behind us: that
+            // notification will set the activity itself, and waiting first
+            // would only delay it.
+            if (wasCleared && this.pendingNotifications <= 1) {
                 // Let a new app pop up
                 await new Promise((resolve) => setTimeout(resolve, 5000));
 
