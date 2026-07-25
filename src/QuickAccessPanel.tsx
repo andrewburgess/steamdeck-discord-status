@@ -1,5 +1,6 @@
 import { FC, Fragment, useCallback, useContext, useMemo } from 'react';
 import { ButtonItem, DropdownItem, Field, PanelSection, PanelSectionRow, Spinner } from '@decky/ui';
+import { BUILD_HASH, VERSION } from 'virtual:build-info';
 import { Actions, ConnectionStatus, Context } from './context';
 import { FaCheck } from 'react-icons/fa';
 
@@ -131,6 +132,21 @@ const QuickAccessPanel: FC<{}> = () => {
                     )}
                 </Fragment>
             )}
+            <PanelSectionRow>
+                <Field bottomSeparator="none" focusable={false} padding="compact">
+                    <div
+                        style={{
+                            color: '#8b929a',
+                            fontSize: '0.7em',
+                            textAlign: 'center',
+                            width: '100%'
+                        }}
+                    >
+                        Version {VERSION}
+                        {BUILD_HASH && ` (${BUILD_HASH})`}
+                    </div>
+                </Field>
+            </PanelSectionRow>
         </PanelSection>
     );
 };

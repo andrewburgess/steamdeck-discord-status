@@ -31,3 +31,11 @@ pnpm zip           # build out/<plugin>.zip for a manual install, no deploy
 
 The plugin is installed to `/home/deck/homebrew/plugins/<PluginName>`, with spaces stripped from
 the name in `plugin.json`, which is the same folder decky itself uses when installing from the store.
+
+### Confirming what is deployed
+
+The bottom of the quick access panel shows the version from `package.json`. Builds that go to a
+deck also get a short hash covering both the frontend bundle and `main.py`, so the panel reads
+`Version 1.5.0 (e5fc95b5b)` — if that hash matches the one printed by your build, the deck is
+running the code you just wrote. Release builds (`pnpm build`, `pnpm zip`) omit the hash and show
+`Version 1.5.0` alone.
