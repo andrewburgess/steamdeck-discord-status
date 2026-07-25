@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import json
 import os
 import select
@@ -242,6 +243,17 @@ class Plugin:
 
         return self.lock
 
+    async def _in_thread(self, func, *args):
+        """Runs blocking pipe IO off the event loop.
+
+        Every socket operation can take up to the pipe timeout, and the plugin
+        should stay responsive to the frontend while a slow or wedged Discord
+        works through one. The lock keeps a single thread on the pipe at a time.
+        """
+        loop = asyncio.get_running_loop()
+
+        return await loop.run_in_executor(None, func, *args)
+
     def _read_device_name(self):
         name = self._get_settings().getSetting(SETTING_DEVICE_NAME, DEFAULT_DEVICE_NAME)
 
@@ -391,32 +403,35 @@ class Plugin:
 
         return False
 
+    def _push_clear(self):
+        if self.pipe is None or not self.pipe.is_alive():
+            self._drop_pipe()
+            return False
+
+        decky.logger.info("Clearing activity")
+
+        try:
+            self.pipe.send({
+                "cmd": "SET_ACTIVITY",
+                "args": {
+                    "pid": os.getpid()
+                },
+                "nonce": str(uuid.uuid4())
+            })
+        except (CommandException, EmptyReceiveException, OSError, ValueError) as e:
+            decky.logger.warning("Could not clear activity: %r", e)
+            self._drop_pipe()
+            return False
+
+        self._drop_pipe()
+
+        return True
+
     async def clear_activity(self):
         async with self._get_lock():
             self.activity = None
 
-            if self.pipe is None or not self.pipe.is_alive():
-                self._drop_pipe()
-                return False
-
-            decky.logger.info("Clearing activity")
-
-            try:
-                self.pipe.send({
-                    "cmd": "SET_ACTIVITY",
-                    "args": {
-                        "pid": os.getpid()
-                    },
-                    "nonce": str(uuid.uuid4())
-                })
-            except (CommandException, EmptyReceiveException, OSError, ValueError) as e:
-                decky.logger.warning("Could not clear activity: %r", e)
-                self._drop_pipe()
-                return False
-
-            self._drop_pipe()
-
-            return True
+            return await self._in_thread(self._push_clear)
 
     async def update_activity(self, activity):
         decky.logger.info(
@@ -430,7 +445,7 @@ class Plugin:
             # having to be open.
             self.activity = activity
 
-            return self._push_activity(activity)
+            return await self._in_thread(self._push_activity, activity)
 
     def _probe(self):
         """Opens a connection for real rather than trusting the socket file."""
@@ -454,7 +469,7 @@ class Plugin:
 
         async with self._get_lock():
             for attempt in range(2):
-                if self._probe():
+                if await self._in_thread(self._probe):
                     decky.logger.info("Connected to Discord")
                     return True
 
@@ -468,7 +483,7 @@ class Plugin:
         async with self._get_lock():
             # An explicit disconnect also stops the supervisor re-asserting.
             self.activity = None
-            self._drop_pipe()
+            await self._in_thread(self._drop_pipe)
 
     async def _supervise(self):
         """Re-asserts the presence periodically while something is running.
@@ -489,7 +504,7 @@ class Plugin:
                     if self.activity is None:
                         continue
 
-                    if not self._push_activity(self.activity):
+                    if not await self._in_thread(self._push_activity, self.activity):
                         decky.logger.warning("Supervisor could not refresh the activity")
                         delay = SUPERVISOR_RETRY_INTERVAL
             except asyncio.CancelledError:
