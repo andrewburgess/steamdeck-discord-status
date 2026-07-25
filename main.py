@@ -15,6 +15,10 @@ CLIENT_ID = "1055680235682672682"
 # The plugin's own icon, shown as the small overlay on the presence.
 SMALL_IMAGE = "https://cdn.discordapp.com/app-assets/1055680235682672682/1056080943783354388.png"
 
+# Where the Deck's own user session keeps its sockets, used when the plugin's
+# own XDG_RUNTIME_DIR does not lead anywhere useful.
+DEFAULT_RUNTIME_DIR = "/run/user/1000"
+
 # SteamOS runs on plenty of hardware that is not a Steam Deck, and there is no
 # reliable way to tell those devices apart automatically, so the name is just
 # something the user tells us.
@@ -54,17 +58,36 @@ class Pipe:
     TIMEOUT = 5
 
     @staticmethod
-    def get_ipc_file():
-        flatpak_root = "/run/user/1000/app/com.discordapp.Discord"
-        other_root = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/1000"
+    def _runtime_dirs():
+        # Plugins run as root, so XDG_RUNTIME_DIR can point at root's own
+        # directory rather than the one the Discord client is using.
+        dirs = []
 
-        for i in range(10):
-            path = os.path.join(flatpak_root, "discord-ipc-{}".format(i))
-            if os.path.exists(path):
-                return path
-            path = os.path.join(other_root, "discord-ipc-{}".format(i))
-            if os.path.exists(path):
-                return path
+        for candidate in (os.environ.get("XDG_RUNTIME_DIR"), DEFAULT_RUNTIME_DIR):
+            if candidate and candidate not in dirs:
+                dirs.append(candidate)
+
+        return dirs
+
+    @staticmethod
+    def get_ipc_file():
+        roots = []
+
+        # Flatpak clients keep their socket in a per-application directory.
+        # Globbing those covers Vesktop and the other forks the plugin already
+        # recognises in the library, not just the official client. They come
+        # first because a socket sitting in the runtime directory itself is the
+        # more likely one to have been left behind by something that exited.
+        for runtime_dir in Pipe._runtime_dirs():
+            roots.extend(sorted(glob.glob(os.path.join(runtime_dir, "app", "*"))))
+
+        roots.extend(Pipe._runtime_dirs())
+
+        for root in roots:
+            for i in range(10):
+                path = os.path.join(root, "discord-ipc-{}".format(i))
+                if os.path.exists(path):
+                    return path
 
         return None
 
