@@ -28,11 +28,19 @@ export interface Activity {
     localImageUrl: string;
 }
 
+/** Where a detectable application can be bought, keyed by storefront. */
+interface DiscordThirdPartySku {
+    distributor: string;
+    id: string | null;
+}
+
 /** An entry from Discord's detectable applications endpoint. */
 interface DiscordDetectableApplication {
     aliases?: string[];
     id: string;
     name: string;
+    /** Sometimes a bare object rather than an array. */
+    third_party_skus?: DiscordThirdPartySku | DiscordThirdPartySku[];
 }
 
 /**
@@ -41,7 +49,12 @@ interface DiscordDetectableApplication {
  * come to well under 1MB.
  */
 interface DetectableApplicationIndex {
-    /** Exact display names. Tried first so a fuzzy collision cannot beat one. */
+    /**
+     * Steam appid to Discord application id, from each entry's steam SKU. An
+     * identifier rather than a guess, so it is tried before any name.
+     */
+    steam: Record<string, string>;
+    /** Exact display names. Tried before fuzzy so a collision cannot beat one. */
     exact: Record<string, string>;
     /** Normalised names plus aliases, with ambiguous keys removed. */
     normalised: Record<string, string>;
@@ -186,9 +199,11 @@ function buildDetectableIndex(
 ): DetectableApplicationIndex {
     // Null prototype so a game called "constructor" cannot collide with
     // something inherited from Object.prototype.
+    const steam: Record<string, string> = Object.create(null);
     const exact: Record<string, string> = Object.create(null);
     const normalised: Record<string, string> = Object.create(null);
     const variants: Record<string, string> = Object.create(null);
+    const ambiguousSteam = new Set<string>();
     const ambiguous = new Set<string>();
     const ambiguousVariants = new Set<string>();
 
@@ -218,12 +233,22 @@ function buildDetectableIndex(
     for (const application of usable) {
         exact[application.name] = application.id;
 
+        for (const sku of [application.third_party_skus ?? []].flat()) {
+            if (sku?.distributor === 'steam' && sku.id) {
+                claim(steam, ambiguousSteam, String(sku.id), application.id);
+            }
+        }
+
         for (const name of namesOf(application)) {
             const key = normaliseName(name ?? '');
             if (key) {
                 claim(normalised, ambiguous, key, application.id);
             }
         }
+    }
+
+    for (const key of ambiguousSteam) {
+        delete steam[key];
     }
 
     // A key two different applications both claim would be a coin flip, and
@@ -253,11 +278,17 @@ function buildDetectableIndex(
         delete variants[key];
     }
 
-    return { exact, normalised: Object.assign(variants, normalised) };
+    return { steam, exact, normalised: Object.assign(variants, normalised) };
 }
 
+/**
+ * Resolves a Discord application, most reliable signal first: the Steam appid
+ * is an identifier both sides agree on, an exact display name is solid, and a
+ * normalised name is the last resort.
+ */
 function findDetectableApplicationId(
     index: DetectableApplicationIndex | null,
+    steamAppId: string | null,
     name: string
 ): string | undefined {
     if (!index) {
@@ -266,7 +297,10 @@ function findDetectableApplicationId(
 
     // These come from JSON.parse, so a game called "constructor" would
     // otherwise pick up something off Object.prototype.
-    const match = index.exact[name] ?? index.normalised[normaliseName(name)];
+    const match =
+        (steamAppId === null ? undefined : index.steam[steamAppId]) ??
+        index.exact[name] ??
+        index.normalised[normaliseName(name)];
 
     return typeof match === 'string' ? match : undefined;
 }
@@ -288,7 +322,16 @@ function convertAppOverviewToActivity(
         }
     }
 
-    const discordRemoteId = findDetectableApplicationId(detectable, appInfo.display_name);
+    // Non-Steam shortcuts get a synthesised appid that means nothing to
+    // Discord, so only real Steam apps are looked up by id.
+    const steamAppId =
+        appInfo.app_type === AppType.Shortcut ? null : appInfo.appid.toString();
+
+    const discordRemoteId = findDetectableApplicationId(
+        detectable,
+        steamAppId,
+        appInfo.display_name
+    );
 
     if (!discordRemoteId && appInfo.app_type === AppType.Shortcut) {
         image = 'steamdeck';
@@ -389,7 +432,11 @@ export class Api extends EventEmitter {
         // completes still resolve to a Discord application.
         const cached = this.readDetectableCache();
         if (cached) {
-            this._detectableApplications = { exact: cached.exact, normalised: cached.normalised };
+            this._detectableApplications = {
+                steam: cached.steam,
+                exact: cached.exact,
+                normalised: cached.normalised
+            };
         }
 
         this.updateActivityState();
@@ -799,7 +846,11 @@ export class Api extends EventEmitter {
      */
     protected async loadDetectableDiscordApps(): Promise<void> {
         const parsed = this.readDetectableCache();
-        const stale = parsed && { exact: parsed.exact, normalised: parsed.normalised };
+        const stale = parsed && {
+            steam: parsed.steam,
+            exact: parsed.exact,
+            normalised: parsed.normalised
+        };
 
         if (parsed && stale && Date.now() - parsed.lastFetch < DETECTABLE_CACHE_TTL) {
             this._detectableApplications = stale;
@@ -844,7 +895,16 @@ export class Api extends EventEmitter {
         try {
             const parsed = JSON.parse(cached) as CachedDetectableApplications;
 
-            return parsed?.version === DETECTABLE_CACHE_VERSION ? parsed : null;
+            // Shape as well as version: an entry written before a lookup was
+            // added is the right version but missing a map, and refetching is
+            // cheaper than degrading quietly.
+            const usable =
+                parsed?.version === DETECTABLE_CACHE_VERSION &&
+                !!parsed.steam &&
+                !!parsed.exact &&
+                !!parsed.normalised;
+
+            return usable ? parsed : null;
         } catch (e) {
             log('Discarding unreadable detectable app cache', e);
             return null;
