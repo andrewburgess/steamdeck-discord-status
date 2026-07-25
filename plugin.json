@@ -2,7 +2,7 @@
     "name": "Discord Status",
     "author": "Deceptacle",
     "api_version": 1,
-    "flags": ["debug"],
+    "flags": [],
     "publish": {
         "tags": ["discord"],
         "description": "Displays current Steam Deck game in Discord",
