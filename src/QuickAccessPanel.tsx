@@ -24,10 +24,6 @@ const QuickAccessPanel: FC<{}> = () => {
         dispatch(Actions.launchDiscord());
     }, []);
 
-    // Held locally while typing so we save once the field is done with, rather
-    // than pushing a new presence to Discord on every keystroke. Both drafts
-    // follow settingsRevision so they snap back to the stored value after a
-    // save, including one the backend normalized or refused.
     const [deviceNameDraft, setDeviceNameDraft] = useState(state.deviceName);
     const [applicationIdDraft, setApplicationIdDraft] = useState(state.discordApplicationId);
     const [showAdvanced, setShowAdvanced] = useState(false);

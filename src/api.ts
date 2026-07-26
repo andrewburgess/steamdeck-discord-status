@@ -47,19 +47,18 @@ interface DiscordDetectableApplication {
 }
 
 /**
- * Name lookups built from that endpoint. The raw response is ~12MB of
- * executables, hashes and overlay settings we never read; the two maps below
- * come to well under 1MB.
+ * Name lookups built from Discord's detectable applications endpoint, keeping
+ * only the values that are relevant to us since the raw response is quite large
  */
 interface DetectableApplicationIndex {
     /**
-     * Steam appid to Discord application id, from each entry's steam SKU. An
-     * identifier rather than a guess, so it is tried before any name.
+     * Steam appid to Discord application id, from each entry's steam SKU. This should be
+     * the definitive match if we can make it
      */
     steam: Record<string, string>;
-    /** Exact display names. Tried before fuzzy so a collision cannot beat one. */
+    /** Exact display names as the next try if we can't match on a direct Steam ID */
     exact: Record<string, string>;
-    /** Normalized names plus aliases, with ambiguous keys removed. */
+    /** Fuzzy matches that can be used as a last resort attempt to correlate an application */
     normalized: Record<string, string>;
 }
 
@@ -77,31 +76,28 @@ export enum Event {
     connecting = 'connecting',
     deviceNameSet = 'device-name-set',
     /**
-     * The Discord *application* we report presence as changed -- a snowflake
-     * from the Discord developer portal, used as the RPC client_id. Not to be
-     * confused with discordShortcutFound.
+     * Updates the ID of the reportable activity used when we can't make a match against Discord's detectable
+     * application list. This allows the user to use a custom Discord application that they can tweak if they
+     * want to change the fallback name and primary image.
      */
     discordApplicationIdSet = 'discord-application-id-set',
     /**
-     * We located Discord itself in the Steam library. Carries the *Steam* app id
-     * of the non-Steam shortcut, which is what we launch. Nothing to do with
-     * Discord's own application ids.
+     * Save off the shortcut ID that we think corresponds to Discord
      */
     discordShortcutFound = 'discord-shortcut-set',
     disconnect = 'disconnect',
     update = 'update'
 }
 
-/** Kept in sync with DEFAULT_DEVICE_NAME in main.py. */
 export const DEFAULT_DEVICE_NAME = 'Steam Deck';
 
-/** The plugin's own Discord application, and CLIENT_ID in main.py. */
+/** The plugin's own Discord application */
 export const DEFAULT_DISCORD_APPLICATION_ID = '1055680235682672682';
 
 const DISCORD_SHORTCUT_COMMANDS = ['com.discordapp.Discord', 'dev.vencord.Vesktop'];
 
-// Steam reports Discord as running the moment the process starts, well before
-// it serves its IPC socket, so the first connection attempt usually fails.
+// When we launch Discord, it may take a bit before the socket is ready for connections, so try a few
+// times to check the connection status.
 const DISCORD_STARTUP_ATTEMPTS = 12;
 const DISCORD_STARTUP_RETRY = 3000;
 
@@ -144,9 +140,8 @@ async function isDiscord(appInfo: AppOverview): Promise<boolean> {
 }
 
 /**
- * Steam and Discord spell the same game differently -- "HELLDIVERS™ 2" against
- * "HELLDIVERS 2", "For The King II" against "For the King II", "Tavern Keeper
- * 🍻" against "Tavern Keeper". Fold away the decoration so those still line up.
+ * Steam and Discord spell the same game differently sometimes (e.g., "HELLDIVERS™ 2" against "HELLDIVERS 2", "Tavern Keeper 🍻" against "Tavern Keeper").
+ * Try to normalize the names so that they match more reliably
  */
 function normaliseName(name: string): string {
     return name
@@ -262,7 +257,7 @@ function convertAppOverviewToActivity(
         }
     }
 
-    // Non-Steam shortcuts get a synthesised appid that means nothing to
+    // Non-Steam shortcuts get a synthesized appid that means nothing to
     // Discord, so only real Steam apps are looked up by id.
     const steamAppId = appInfo.app_type === AppType.Shortcut ? null : appInfo.appid.toString();
 
@@ -307,7 +302,6 @@ export class Api extends EventEmitter {
         return this._activities;
     }
 
-    /** Parsed once per refresh rather than per activity. */
     private _detectableApplications: DetectableApplicationIndex | null = null;
 
     private _deviceName: string = DEFAULT_DEVICE_NAME;
@@ -318,10 +312,8 @@ export class Api extends EventEmitter {
 
     private _discordApplicationId: string = DEFAULT_DISCORD_APPLICATION_ID;
     /**
-     * The Discord application used for games Discord does not recognise. Its
-     * name in the developer portal is the bold line of the presence, which
-     * SET_ACTIVITY cannot override -- swapping applications is the only way to
-     * change that text.
+     * The Discord application used as the fallback for when we can't determine the
+     * game being played from the list of detectable applications.
      */
     public get discordApplicationId() {
         return this._discordApplicationId;
@@ -374,8 +366,6 @@ export class Api extends EventEmitter {
             SteamClient.User.RegisterForPrepareForSystemSuspendProgress(this.onSuspend.bind(this))
         );
 
-        // Seed from the last run so activities built before the first refresh
-        // completes still resolve to a Discord application.
         const cached = this.readDetectableCache();
         if (cached) {
             this._detectableApplications = {
@@ -395,10 +385,8 @@ export class Api extends EventEmitter {
     }
 
     /**
-     * Keeps trying to connect while Discord is starting up. Without this a
-     * launch is a single attempt against a socket that is not listening yet,
-     * leaving the plugin disconnected -- and silently dropping every activity
-     * update -- until the panel is next opened.
+     * Keeps trying to connect while Discord is starting up since it may take a bit for the socket to be
+     * established and we don't want to lose any activity updates while we wait.
      */
     private async waitForDiscord(): Promise<void> {
         if (this.waitingForDiscord) {
@@ -544,16 +532,15 @@ export class Api extends EventEmitter {
 
     /**
      * Saves the Discord application id. The backend rejects anything that is not
-     * a snowflake and hands back the id still in effect, so a typo leaves the
+     * in the expected format and hands back the id still in effect, so a typo leaves the
      * setting alone rather than breaking the presence.
      */
     public async setDiscordApplicationId(applicationId: string): Promise<string> {
-        log('Setting Discord application id', applicationId);
-
         const requested = applicationId.trim();
+        log('Setting Discord application id', requested);
 
         try {
-            this._discordApplicationId = await this._setDiscordApplicationId(applicationId);
+            this._discordApplicationId = await this._setDiscordApplicationId(requested);
         } catch (e) {
             log('Failed to save Discord application id', e);
             return this._discordApplicationId;
@@ -663,10 +650,9 @@ export class Api extends EventEmitter {
             }
 
             if (await isDiscord(gameInfo)) {
-                // Deliberately not awaited: Discord can take tens of seconds to
-                // start serving, and holding the queue that long would delay
-                // reporting a game launched in the meantime. Connecting
-                // re-asserts whatever is running by then.
+                // Deliberately not awaited. Discord can take a bit before the connection is established, and holding
+                // the queue that long would delay reporting a game launched in the meantime. Connecting re-asserts
+                // whatever is running by then.
                 this.waitForDiscord().catch((e) => log('Failed waiting for Discord', e));
             } else {
                 const activity = convertAppOverviewToActivity(
@@ -847,9 +833,8 @@ export class Api extends EventEmitter {
     }
 
     /**
-     * Refreshes the detectable application index, daily at most. Only the name
-     * lookups are kept: the raw response is ~12MB and re-parsing that for every
-     * activity we build cost tens of milliseconds a time.
+     * Refreshes the detectable application index, daily at most. This converts the list into a more manageable format
+     * since the raw response is large and full of data that is not relevant to us.
      */
     protected async loadDetectableDiscordApps(): Promise<void> {
         const parsed = this.readDetectableCache();

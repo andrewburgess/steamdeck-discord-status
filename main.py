@@ -12,30 +12,27 @@ from settings import SettingsManager
 
 CLIENT_ID = "1055680235682672682"
 
-# The plugin's own icon, shown as the small overlay on the presence.
+# The plugin's icon, shown as the small overlay on the presence.
 SMALL_IMAGE = "https://cdn.discordapp.com/app-assets/1055680235682672682/1056080943783354388.png"
 
-# Where the Deck's own user session keeps its sockets, used when the plugin's
-# own XDG_RUNTIME_DIR does not lead anywhere useful.
+# Where the Deck default user session keeps its sockets, used when XDG_RUNTIME_DIR does not
+# seem to point anywhere
 DEFAULT_RUNTIME_DIR = "/run/user/1000"
 
-# SteamOS runs on plenty of hardware that is not a Steam Deck, and there is no
-# reliable way to tell those devices apart automatically, so the name is just
-# something the user tells us.
+# Fallback name for the device, but the user can change it based on the device they are playing on.
 DEFAULT_DEVICE_NAME = "Steam Deck"
 SETTING_DEVICE_NAME = "device_name"
 
-# Discord takes the bold application name in the presence from whichever
-# application the client_id belongs to -- SET_ACTIVITY has no field for it. The
-# only way to change that text is to hand over a different application, so the
-# id is configurable.
+# The fallback Discord application when we can't determine one from the "detectable" list that
+# they provide. The user can create their own Discord application if they want to customize the
+# images or primary name in the rich presence
 SETTING_DISCORD_APPLICATION_ID = "discord_application_id"
 
-# How often the supervisor re-asserts the presence while something is running,
-# and how soon it tries again after a failure. Discord rate limits SET_ACTIVITY
-# to roughly five updates per twenty seconds, so both stay well inside that.
+# The interval to try repeating the presence update to make sure Discord receives it and maintains
+# the correct presence.
 SUPERVISOR_INTERVAL = 60
-SUPERVISOR_RETRY_INTERVAL = 15
+# The interval to retry after a failure to ensure the presence is updated correctly.
+SUPERVISOR_RETRY_INTERVAL = 30
 
 OP_HANDSHAKE = 0
 OP_FRAME = 1
@@ -53,14 +50,12 @@ class CommandException(Exception):
     """Raised when Discord answers a command with an error"""
 
 class Pipe:
-    # Every read and write is bounded so a wedged Discord cannot stall the
-    # plugin's event loop indefinitely.
+    # Maximum time to wait for a response from the socket before timing out.
     TIMEOUT = 5
 
     @staticmethod
     def _runtime_dirs():
-        # Plugins run as root, so XDG_RUNTIME_DIR can point at root's own
-        # directory rather than the one the Discord client is using.
+        # Directories to check for the Discord IPC socket.
         dirs = []
 
         for candidate in (os.environ.get("XDG_RUNTIME_DIR"), DEFAULT_RUNTIME_DIR):
@@ -73,11 +68,9 @@ class Pipe:
     def get_ipc_file():
         roots = []
 
-        # Flatpak clients keep their socket in a per-application directory.
-        # Globbing those covers Vesktop and the other forks the plugin already
-        # recognises in the library, not just the official client. They come
-        # first because a socket sitting in the runtime directory itself is the
-        # more likely one to have been left behind by something that exited.
+        # Look for IPC sockets in the application-specific directories first. This is generic in order
+        # to try to support alternative Discord clients that use a similar directory structure, but have
+        # a different primary folder name.
         for runtime_dir in Pipe._runtime_dirs():
             roots.extend(sorted(glob.glob(os.path.join(runtime_dir, "app", "*"))))
 
@@ -128,7 +121,7 @@ class Pipe:
 
         try:
             # Peeking would block on a live but quiet pipe, so only look once the
-            # socket has something -- either a frame or the end of file.
+            # socket has something, either a frame or the end of file.
             readable, _, _ = select.select([self.socket], [], [], 0)
             if not readable:
                 return True
@@ -172,7 +165,7 @@ class Pipe:
         """Sends a command and reads the reply, raising when Discord refuses it.
 
         Leaving the reply unread would let it pile up in the receive buffer and
-        would hide every rejection -- a bad application id or a rate limit look
+        would hide every rejection. A bad application id or a rate limit look
         exactly like success from the sending side.
         """
         self._send(payload)
@@ -236,8 +229,6 @@ class Pipe:
         self.socket.sendall(payload)
 
 class Plugin:
-    # Declared on the class so a frontend call that lands before anything has
-    # connected reads None rather than raising AttributeError.
     activity = None
     pipe = None
     settings = None
@@ -247,8 +238,7 @@ class Plugin:
         decky.logger.debug("Called with %s ", args)
 
     def _get_settings(self):
-        # Created on demand rather than in _main, so a frontend call that lands
-        # before the startup task has run still works.
+        # Initialize settings if we haven't done so previously
         if self.settings is None:
             self.settings = SettingsManager(
                 name="settings",
@@ -267,12 +257,7 @@ class Plugin:
         return self.lock
 
     async def _in_thread(self, func, *args):
-        """Runs blocking pipe IO off the event loop.
-
-        Every socket operation can take up to the pipe timeout, and the plugin
-        should stay responsive to the frontend while a slow or wedged Discord
-        works through one. The lock keeps a single thread on the pipe at a time.
-        """
+        """Prevent blocking the event loop by running pipe IO in a separate thread."""
         loop = asyncio.get_running_loop()
 
         return await loop.run_in_executor(None, func, *args)
@@ -359,12 +344,7 @@ class Plugin:
             self.pipe = None
 
     def _ensure_pipe(self, app_id):
-        """A handshaken pipe for app_id, reusing the open one where possible.
-
-        Reconnecting per update meant the previous socket was closed by garbage
-        collection right after the replacement had connected, so Discord saw an
-        abrupt client disconnect racing every presence change.
-        """
+        """Make sure this pipe is the correct one for the given application id"""
         if self.pipe is not None:
             if self.pipe.app_id == app_id and self.pipe.is_alive():
                 return self.pipe
@@ -381,7 +361,7 @@ class Plugin:
         return pipe
 
     def _push_activity(self, activity):
-        """Sends the presence, reconnecting once if the open pipe has gone away."""
+        """Update Discord with the current rich presence activity"""
         app_id = self._app_id_for(activity)
 
         data = {
@@ -509,12 +489,9 @@ class Plugin:
             await self._in_thread(self._drop_pipe)
 
     async def _supervise(self):
-        """Re-asserts the presence periodically while something is running.
-
-        Nothing else recovers a presence that has gone stale: a Discord restart,
-        a resume from suspend or a dropped socket would otherwise leave it wrong
-        until the user happened to open the plugin's panel, which reconnects as
-        a side effect and hides the problem.
+        """Updates the rich presence activity periodically if one is running to make sure Discord stays in sync.
+        Sometimes other activities may try to override the current rich presence, and sometimes Discord may clear
+        it after a period of time if no other updates have been sent.
         """
         delay = SUPERVISOR_INTERVAL
 
