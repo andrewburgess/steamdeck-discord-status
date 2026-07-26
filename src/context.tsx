@@ -222,9 +222,9 @@ const Provider: React.FC<ProviderProps> = (props) => {
         dispatch(Actions.setDeviceName(props.api.deviceName));
         dispatch(Actions.setDiscordApplicationId(props.api.discordApplicationId));
 
-        if (!props.api.connected) {
-            dispatch(Actions.connect());
-        }
+        // Always re-check, even when the last result was a connection: Discord
+        // may have quit since, and nothing polls for that while the panel is shut.
+        dispatch(Actions.connect());
 
         return () => {
             props.api.removeAllListeners();

@@ -100,6 +100,11 @@ export const DEFAULT_DISCORD_APPLICATION_ID = '1055680235682672682';
 
 const DISCORD_SHORTCUT_COMMANDS = ['com.discordapp.Discord', 'dev.vencord.Vesktop'];
 
+// Steam reports Discord as running the moment the process starts, well before
+// it serves its IPC socket, so the first connection attempt usually fails.
+const DISCORD_STARTUP_ATTEMPTS = 12;
+const DISCORD_STARTUP_RETRY = 3000;
+
 async function isDiscord(appInfo: AppOverview): Promise<boolean> {
     // Only ever a non-Steam shortcut, and resolving app details can take up to
     // the timeout below, so rule everything else out without asking. This is
@@ -322,6 +327,7 @@ export class Api extends EventEmitter {
         return this._discordApplicationId;
     }
 
+    private waitingForDiscord = false;
     private _connected: boolean = false;
     public get connected() {
         return this._connected;
@@ -388,6 +394,34 @@ export class Api extends EventEmitter {
         return Api.instance;
     }
 
+    /**
+     * Keeps trying to connect while Discord is starting up. Without this a
+     * launch is a single attempt against a socket that is not listening yet,
+     * leaving the plugin disconnected -- and silently dropping every activity
+     * update -- until the panel is next opened.
+     */
+    private async waitForDiscord(): Promise<void> {
+        if (this.waitingForDiscord) {
+            return;
+        }
+
+        this.waitingForDiscord = true;
+
+        try {
+            for (let attempt = 0; attempt < DISCORD_STARTUP_ATTEMPTS; attempt++) {
+                if (await this.checkConnection()) {
+                    return;
+                }
+
+                await sleep(DISCORD_STARTUP_RETRY);
+            }
+
+            log('Discord did not accept a connection after starting');
+        } finally {
+            this.waitingForDiscord = false;
+        }
+    }
+
     public async checkConnection(): Promise<boolean> {
         log('Checking connection');
         this.emit(Event.connecting);
@@ -400,6 +434,9 @@ export class Api extends EventEmitter {
         ]);
         if (!discordShortcutAppId) {
             log('No Discord app found');
+            this._connected = false;
+            this.emit(Event.disconnect);
+
             return false;
         }
 
@@ -626,10 +663,11 @@ export class Api extends EventEmitter {
             }
 
             if (await isDiscord(gameInfo)) {
-                const connected = await this.checkConnection();
-                if (connected && this.runningActivity) {
-                    await this.updateActivity(this.runningActivity);
-                }
+                // Deliberately not awaited: Discord can take tens of seconds to
+                // start serving, and holding the queue that long would delay
+                // reporting a game launched in the meantime. Connecting
+                // re-asserts whatever is running by then.
+                this.waitForDiscord().catch((e) => log('Failed waiting for Discord', e));
             } else {
                 const activity = convertAppOverviewToActivity(
                     gameInfo,
@@ -651,8 +689,9 @@ export class Api extends EventEmitter {
             }
         } else {
             if (await isDiscord(gameInfo)) {
-                this._connected = false;
-                this.emit(Event.disconnect);
+                // Drops the backend's pipe too, so it does not hold a socket
+                // whose other end has gone until something next probes it.
+                await this.disconnect();
                 return;
             }
 
