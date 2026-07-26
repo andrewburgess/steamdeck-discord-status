@@ -1,0 +1,6 @@
+# The plugin runs on Linux, so keep LF everywhere regardless of the checkout's
+# platform or autocrlf setting. Windows tooling silently writing CRLF has
+# already produced whole-file diffs once.
+* text=auto eol=lf
+
+*.png binary
