@@ -1,5 +1,11 @@
 # Steam Deck Discord Status
 
+> [!WARNING]
+> This project is archived and no longer maintained. v1.6.0 is the final release. For a more
+> feature-rich and actively maintained alternative, check out
+> [Deckcord](https://github.com/marios8543/Deckcord) or
+> [Steamcord](https://github.com/Necrosiak/Steamcord).
+
 Updates Discord Rich Presence with the currently running game while on Steam Deck.
 
 ## How to Use
